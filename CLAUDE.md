@@ -34,7 +34,7 @@ an MQTT broker, a Python cloud processor, and a real-time dashboard.
 ```
 smart-space-pulse/
 ├── CLAUDE.md                   ← you are here
-├── README.md                   ← human quick-start (auto-generated from this file's §3)
+├── README.md                   ← human quick-start
 ├── .env.example                ← all env vars, no real values
 ├── .gitignore
 │
@@ -58,24 +58,16 @@ smart-space-pulse/
 │   ├── model/
 │   │   ├── train.py
 │   │   ├── inference.py
-│   │   └── lstm_weights.pt     ← tracked via Git LFS or excluded; see §7
-│   ├── storage.py              ← write to InfluxDB / SQLite / CSV
-│   └── notebooks/
-│       └── exploration.ipynb   ← time-series plots, histograms
+│   │   └── lstm_weights.pt     ← tracked via Git LFS or excluded; see §6
+│   └── storage.py              ← write to SQLite
 │
 ├── visualization/              ← Deliverable 4 (cont.)
-│   ├── dashboard.py            ← Grafana provisioning OR Streamlit app
-│   └── grafana/
-│       └── dashboard.json      ← exported Grafana panel config
+│   └── dashboard.py            ← Streamlit app
 │
 ├── config/                     ← Deliverable 5: configuration
-│   ├── .env.example
-│   ├── iam_policy.json.example ← redacted AWS/GCP IAM sample
-│   └── certs/
-│       └── README_CERTS.md     ← how to generate & rotate TLS certs
+│   └── .env.example
 │
 ├── observability/              ← Deliverable 6
-│   ├── metrics.py              ← latency, throughput, error counters
 │   ├── replay.py               ← feed recorded samples back through pipeline
 │   └── sample_logs/
 │       ├── success.log
@@ -83,11 +75,7 @@ smart-space-pulse/
 │
 ├── data_samples/               ← Deliverable 7
 │   ├── sensor_readings.csv
-│   ├── mqtt_messages.jsonl
-│   └── DATA_DICTIONARY.md      ← units, sampling rates, column definitions
-│
-├── results/                    ← Deliverable 8
-│   └── report.md               ← 2–3 page KPI report
+│   └── mqtt_messages.jsonl
 │
 └── tests/
     ├── test_feature_extractor.py
@@ -104,40 +92,7 @@ smart-space-pulse/
 
 ---
 
-## 3. README (Root) — Content Contract
-
-When generating or updating `README.md`, include exactly these sections in order:
-
-```markdown
-# Smart Space Pulse
-
-## Overview
-## Prerequisites
-## Environment Setup
-## Quick Start
-### 1. Flash Device Firmware
-### 2. Start the MQTT Broker
-### 3. Run the Cloud Processor
-### 4. Launch the Dashboard
-## Run Commands Reference
-## Troubleshooting
-```
-
-**Run commands to document:**
-
-| Component | Command |
-|-----------|---------|
-| Device (local sim) | `python device/main.py --sim` |
-| MQTT broker (Docker) | `docker compose up broker` |
-| Ingestor | `python processing/ingestor.py` |
-| Windower + inference | `python processing/windower.py` |
-| Dashboard (Streamlit) | `streamlit run visualization/dashboard.py` |
-| Replay test | `python observability/replay.py --file data_samples/mqtt_messages.jsonl` |
-| Unit tests | `pytest tests/ -v` |
-
----
-
-## 4. Device Code (Core2) — Deliverable 2
+## 3. Device Code (Core2) — Deliverable 2
 
 ### Sensor pipeline
 
@@ -186,7 +141,7 @@ MOTION_THRESHOLD    = 0.5    # m/s²
 
 ---
 
-## 5. Messaging & Schema — Deliverable 3
+## 4. Messaging & Schema — Deliverable 3
 
 ### MQTT topic hierarchy
 
@@ -247,15 +202,13 @@ ssp/                              # Smart Space Pulse root
 
 ---
 
-## 6. Processing / Storage / Visualization — Deliverable 4
+## 5. Processing / Storage / Visualization — Deliverable 4
 
 ### Ingestor (`processing/ingestor.py`)
 
 - Subscribe to `ssp/#` with QoS 1.
 - Validate schema (raise + log on failure, do not crash).
-- Write raw messages to append-only storage (InfluxDB line protocol **or** SQLite `raw_telemetry`
-  table **or** newline-delimited JSON file `data/raw/YYYY-MM-DD.jsonl`).
-- Emit a `messages_received_total` counter (Prometheus format or simple log line).
+- Write raw messages to SQLite `raw_telemetry` table.
 
 ### Windower (`processing/windower.py`)
 
@@ -309,15 +262,13 @@ CREATE TABLE location_state (
 
 ### Visualization
 
-- **Option A (preferred):** Streamlit app in `visualization/dashboard.py`.
-  - Tab 1: Live view — gauge per location (color-coded), last 5 min time-series of SPL and accel.
-  - Tab 2: Historical — date-picker, histogram of SPL distribution, occupancy heatmap by hour.
-- **Option B:** Grafana. Export panel JSON to `visualization/grafana/dashboard.json` and include
-  import instructions in README.
+Streamlit app in `visualization/dashboard.py`:
+- Tab 1: Live view — gauge per location (color-coded), last 5 min time-series of SPL and accel.
+- Tab 2: Historical — date-picker, histogram of SPL distribution, occupancy heatmap by hour.
 
 ---
 
-## 7. Configuration & Secrets Handling — Deliverable 5
+## 6. Configuration & Secrets Handling — Deliverable 5
 
 ### `.env.example` (commit this; never commit `.env`)
 
@@ -328,18 +279,8 @@ MQTT_PORT=8883
 MQTT_USERNAME=
 MQTT_PASSWORD=
 
-# TLS certificates (paths only — do not paste cert content here)
-MQTT_CA_CERT=config/certs/ca.crt
-MQTT_CLIENT_CERT=config/certs/client.crt
-MQTT_CLIENT_KEY=config/certs/client.key
-
 # Storage
-STORAGE_BACKEND=sqlite            # sqlite | influxdb | file
 SQLITE_PATH=data/ssp.db
-INFLUX_URL=http://localhost:8086
-INFLUX_TOKEN=
-INFLUX_ORG=
-INFLUX_BUCKET=smart_space_pulse
 
 # Model
 MODEL_WEIGHTS_PATH=processing/model/lstm_weights.pt
@@ -348,7 +289,6 @@ SCORE_LOW_THRESHOLD=55
 
 # Observability
 LOG_LEVEL=INFO
-METRICS_PORT=9090
 ```
 
 ### `.gitignore` must include
@@ -358,8 +298,6 @@ METRICS_PORT=9090
 *.key
 *.pem
 *.p12
-config/certs/*.crt
-config/certs/*.key
 data/raw/
 processing/model/lstm_weights.pt
 __pycache__/
@@ -367,35 +305,10 @@ __pycache__/
 .DS_Store
 ```
 
-### Certificate rotation (`config/certs/README_CERTS.md`)
-
-Document steps to:
-1. Generate a new client keypair (`openssl req ...`).
-2. Sign with the broker CA.
-3. Update `.env` paths on each device and server.
-4. Restart affected services.
-5. Revoke the old certificate.
-
-### IAM policy sample (`config/iam_policy.json.example`)
-
-Provide a redacted AWS IoT or GCP IAM policy allowing only:
-- `iot:Publish` on `ssp/{location_id}/telemetry`
-- `iot:Subscribe` on `ssp/#` (server only)
-- No wildcard `*` resource ARNs.
 
 ---
 
-## 8. Observability & Tests — Deliverable 6
-
-### Metrics to track (log or expose via Prometheus)
-
-| Metric | Type | Description |
-|--------|------|-------------|
-| `messages_received_total` | Counter | Total MQTT messages ingested |
-| `schema_validation_errors_total` | Counter | Messages that failed schema check |
-| `window_processing_latency_ms` | Histogram | Time from window close to score publish |
-| `state_transitions_total` | Counter | Location state changes (by location_id) |
-| `mqtt_reconnects_total` | Counter | Broker reconnection events |
+## 7. Observability & Tests — Deliverable 6
 
 ### `observability/replay.py`
 
@@ -433,7 +346,7 @@ Run: `pytest tests/ -v --tb=short`
 
 ---
 
-## 9. Data Samples — Deliverable 7
+## 8. Data Samples — Deliverable 7
 
 ### `data_samples/sensor_readings.csv`
 
@@ -446,59 +359,15 @@ ts_utc,device_id,location_id,accel_rms,spl_db,seq
 
 Include at least 90 rows (3 complete windows) covering both "suitable" and "not suitable" ground truth.
 
-### `data_samples/DATA_DICTIONARY.md`
-
-| Field | Unit | Range | Notes |
-|-------|------|-------|-------|
-| `accel_rms` | m/s² | 0 – ~20 | RMS of 3-axis accel over 1-second window |
-| `spl_db` | dB SPL | 30 – 100 | A-weighted equivalent level |
-| `score` | dimensionless | 0 – 100 | LSTM output; higher = more suitable |
-| `ts_utc` | ISO 8601 UTC | – | Device clock; NTP-synced if WiFi available |
-
 ---
 
-## 10. Results Report — Deliverable 8
-
-Generate or maintain `results/report.md` with these sections:
-
-```markdown
-## Methodology
-- Describe data collection setup (locations, duration, # devices).
-- Explain feature engineering and LSTM training procedure.
-- Describe how ground truth labels were collected.
-
-## KPIs
-
-| KPI | Target | Achieved |
-|-----|--------|----------|
-| Occupancy classification accuracy | ≥ 85 % | TBD |
-| False alarm rate (unsuitable flagged as suitable) | ≤ 10 % | TBD |
-| End-to-end latency (sensor → dashboard) | ≤ 5 s | TBD |
-| Message throughput | ≥ 1 msg/sec/device | TBD |
-
-## Results
-(Paste confusion matrix, latency histogram, sample dashboard screenshot.)
-
-## Limitations
-- Small labeled dataset; model may not generalize across venue types.
-- Device clock drift if NTP unavailable.
-- LSTM not yet running on-device; edge fallback is rule-based only.
-
-## Next Steps
-- Collect labeled data across ≥ 3 venue types.
-- Experiment with Transformer encoder for better long-range sequence modeling.
-- Deploy on-device quantized MLP as second-level gate.
-```
-
----
-
-## 11. Claude Code Behavioral Rules
+## 9. Claude Code Behavioral Rules
 
 1. **Never commit secrets.** If a task requires a credential, add it to `.env.example` and load
    it with `os.getenv(...)`. Raise `ValueError` at startup if a required env var is missing.
 
 2. **Schema first.** Before writing any producer or consumer code, confirm the payload schema in
-   `messaging/schema.md` matches the JSON structures in §5 of this file.
+   `messaging/schema.md` matches the JSON structures in §4 of this file.
 
 3. **Test before marking complete.** Every new function in `processing/` or `device/` must have a
    corresponding test in `tests/`. Run `pytest` before declaring a task done.

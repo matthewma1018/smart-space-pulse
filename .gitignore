@@ -2,8 +2,6 @@
 *.key
 *.pem
 *.p12
-config/certs/*.crt
-config/certs/*.key
 data/raw/
 processing/model/lstm_weights.pt
 __pycache__/

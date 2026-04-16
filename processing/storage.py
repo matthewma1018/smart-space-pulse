@@ -1,9 +1,8 @@
 """
 Smart Space Pulse — Storage Backend
 
-Writes telemetry and state data to SQLite (default), InfluxDB, or JSONL files.
+Writes telemetry and state data to SQLite.
 """
-import json
 import logging
 import os
 import sqlite3
@@ -38,48 +37,34 @@ def _init_sqlite(db_path: str):
 
 
 class Storage:
-    """Unified storage interface for telemetry data."""
+    """SQLite storage interface for telemetry data."""
 
-    def __init__(self, backend: str = "sqlite", **kwargs):
-        self.backend = backend
-        if backend == "sqlite":
-            db_path = kwargs.get("path", "data/ssp.db")
-            os.makedirs(os.path.dirname(db_path), exist_ok=True)
-            self._conn = _init_sqlite(db_path)
-        elif backend == "file":
-            self._file_dir = kwargs.get("path", "data/raw")
-            os.makedirs(self._file_dir, exist_ok=True)
-        else:
-            raise ValueError(f"Unknown storage backend: {backend}")
+    def __init__(self, db_path: str = None):
+        if db_path is None:
+            db_path = os.getenv("SQLITE_PATH", "data/ssp.db")
+        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        self._conn = _init_sqlite(db_path)
 
     def write_telemetry(self, payload: dict) -> None:
         """Write a telemetry payload to storage."""
-        if self.backend == "sqlite":
-            self._conn.execute(
-                "INSERT INTO raw_telemetry (device_id, location_id, ts_utc, accel_rms, spl_db, seq) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (payload["device_id"], payload["location_id"], payload["ts_utc"],
-                 payload["accel_rms"], payload["spl_db"], payload["seq"]),
-            )
-            self._conn.commit()
-        elif self.backend == "file":
-            date_str = payload["ts_utc"][:10]
-            filepath = os.path.join(self._file_dir, f"{date_str}.jsonl")
-            with open(filepath, "a") as f:
-                f.write(json.dumps(payload) + "\n")
+        self._conn.execute(
+            "INSERT INTO raw_telemetry (device_id, location_id, ts_utc, accel_rms, spl_db, seq) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (payload["device_id"], payload["location_id"], payload["ts_utc"],
+             payload["accel_rms"], payload["spl_db"], payload["seq"]),
+        )
+        self._conn.commit()
 
     def update_state(self, location_id: str, state: str, score: float) -> None:
         """Update the current state for a location."""
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.") + "000Z"
-        if self.backend == "sqlite":
-            self._conn.execute(
-                "INSERT OR REPLACE INTO location_state (location_id, state, score, updated_at) "
-                "VALUES (?, ?, ?, ?)",
-                (location_id, state, score, now),
-            )
-            self._conn.commit()
+        self._conn.execute(
+            "INSERT OR REPLACE INTO location_state (location_id, state, score, updated_at) "
+            "VALUES (?, ?, ?, ?)",
+            (location_id, state, score, now),
+        )
+        self._conn.commit()
 
     def close(self):
-        """Close storage connections."""
-        if self.backend == "sqlite" and hasattr(self, "_conn"):
-            self._conn.close()
+        """Close the database connection."""
+        self._conn.close()
