@@ -1,8 +1,8 @@
 2026-04-17T14:20:00.000Z [INFO ] [ingestor] Connected to MQTT broker at localhost:1883 (rc=0)
-2026-04-17T14:20:01.000Z [INFO ] [ingestor] Received telemetry from core2-a1b2 seq=1
-2026-04-17T14:20:02.000Z [INFO ] [ingestor] Received telemetry from core2-a1b2 seq=2
+2026-04-17T14:20:01.000Z [INFO ] [ingestor] Received telemetry from Core2Kit seq=1
+2026-04-17T14:20:02.000Z [INFO ] [ingestor] Received telemetry from Core2Kit seq=2
 2026-04-17T14:20:30.000Z [INFO ] [windower] location=library-1f score=72.4 state=suitable
-2026-04-17T14:20:31.000Z [INFO ] [ingestor] Received telemetry from core2-a1b2 seq=31
+2026-04-17T14:20:31.000Z [INFO ] [ingestor] Received telemetry from Core2Kit seq=31
 2026-04-17T14:21:00.000Z [INFO ] [windower] location=library-1f score=45.1 state=not_suitable
-2026-04-17T14:21:01.000Z [INFO ] [ingestor] Received telemetry from core2-a1b2 seq=61
+2026-04-17T14:21:01.000Z [INFO ] [ingestor] Received telemetry from Core2Kit seq=61
 2026-04-17T14:21:30.000Z [INFO ] [windower] location=library-1f score=68.3 state=suitable

@@ -6,19 +6,17 @@ No ML inference — pure threshold-based classification.
 """
 
 LOUD_THRESHOLD_DB: float = 75.0   # dB SPL
-MOTION_THRESHOLD: float = 0.5     # m/s²
 
 
-def classify(accel_rms: float, spl_db: float) -> str:
-    """Classify occupancy state using simple thresholds.
+def classify(spl_db: float) -> str:
+    """Classify occupancy state using simple threshold.
 
     Args:
-        accel_rms: RMS acceleration in m/s².
         spl_db: Sound pressure level in dB.
 
     Returns:
-        "busy" if both thresholds exceeded, "quiet" otherwise.
+        "busy" if threshold exceeded, "quiet" otherwise.
     """
-    if spl_db > LOUD_THRESHOLD_DB and accel_rms > MOTION_THRESHOLD:
+    if spl_db > LOUD_THRESHOLD_DB:
         return "busy"
     return "quiet"

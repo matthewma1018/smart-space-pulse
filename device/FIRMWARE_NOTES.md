@@ -15,7 +15,6 @@
 |----------|----------------|
 | I2S Microphone (SPK) | I2S port A (CLK=12, DATA=0) |
 | PDM Microphone (built-in) | GPIO 34 (internal I2S) |
-| Accelerometer (IMU) | I2C (SDA=21, SCL=22, addr=0x68) |
 
 ## Serial Monitoring
 ```bash

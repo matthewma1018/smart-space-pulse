@@ -22,19 +22,18 @@ def get_led_color(score: float) -> str:
     return "red"
 
 
-def format_lcd(state: str, score: float, spl_db: float, accel_rms: float) -> str:
+def format_lcd(state: str, score: float, spl_db: float) -> str:
     """Format the LCD display string.
 
     Args:
         state: Current occupancy state label.
         score: Suitability score.
         spl_db: Current SPL reading.
-        accel_rms: Current acceleration RMS.
 
     Returns:
         Formatted string for LCD display.
     """
-    return f"{state} | {score:.0f}\nSPL: {spl_db:.1f} dB | Accel: {accel_rms:.2f} m/s²"
+    return f"{state} | {score:.0f}\nSPL: {spl_db:.1f} dB"
 
 
 def chirp_on_transition(prev_state: str, current_state: str) -> bool:

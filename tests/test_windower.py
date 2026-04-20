@@ -9,26 +9,25 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from processing.windower import Windower
 
 
-def _make_sample(seq: int, accel: float = 0.2, spl: float = 50.0,
+def _make_sample(seq: int, spl: float = 50.0,
                  location: str = "library-1f") -> dict:
     return {
-        "device_id": "core2-a1b2",
+        "device_id": "Core2Kit",
         "location_id": location,
         "ts_utc": f"2026-04-17T14:20:{seq:02d}.000Z",
-        "accel_rms": accel,
         "spl_db": spl,
         "seq": seq,
     }
 
 
 def test_hysteresis_high_zone():
-    """Score >= 65 → suitable."""
+    """Score >= 65 -> suitable."""
     w = Windower()
     assert w.apply_hysteresis(80.0, "loc-a") == "suitable"
 
 
 def test_hysteresis_low_zone():
-    """Score < 55 → not_suitable."""
+    """Score < 55 -> not_suitable."""
     w = Windower()
     assert w.apply_hysteresis(40.0, "loc-a") == "not_suitable"
 
@@ -38,7 +37,7 @@ def test_hysteresis_dead_band_holds_previous():
     w = Windower()
     # First, set to suitable
     w.apply_hysteresis(70.0, "loc-a")
-    # Now enter dead band — should hold suitable
+    # Now enter dead band -- should hold suitable
     assert w.apply_hysteresis(60.0, "loc-a") == "suitable"
 
 
@@ -66,9 +65,9 @@ def test_ingest_returns_none_before_window_full():
 def test_ingest_returns_state_after_window():
     w = Windower(window_size=30)
     for i in range(29):
-        w.ingest(_make_sample(i, accel=0.1, spl=40.0))
-    result = w.ingest(_make_sample(29, accel=0.1, spl=40.0))
-    # Low accel + low spl should give suitable
+        w.ingest(_make_sample(i, spl=40.0))
+    result = w.ingest(_make_sample(29, spl=40.0))
+    # Low spl should give suitable
     assert result is not None
     assert "state" in result
     assert result["state"] == "suitable"

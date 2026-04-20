@@ -10,35 +10,30 @@ from processing.model.inference import score
 
 
 def test_score_returns_float():
-    result = score([0.2, 0.05, 50.0, 5.0, 55.0, 60.0])
+    result = score([50.0, 5.0, 55.0, 60.0])
     assert isinstance(result, float)
 
 
 def test_score_in_range():
     """Score must be between 0 and 100."""
-    result = score([0.2, 0.05, 50.0, 5.0, 55.0, 60.0])
+    result = score([50.0, 5.0, 55.0, 60.0])
     assert 0.0 <= result <= 100.0
 
 
 def test_low_noise_high_score():
-    """Low motion + low noise should give a high suitability score."""
-    quiet = score([0.1, 0.01, 35.0, 2.0, 40.0, 42.0])
-    loud = score([1.5, 0.5, 80.0, 10.0, 90.0, 95.0])
+    """Low noise should give a high suitability score."""
+    quiet = score([35.0, 2.0, 40.0, 42.0])
+    loud = score([80.0, 10.0, 90.0, 95.0])
     assert quiet > loud
 
 
 def test_high_noise_low_score():
-    """High noise + high motion should give a low score."""
-    result = score([1.8, 0.6, 85.0, 12.0, 92.0, 98.0])
+    """High noise should give a low score."""
+    result = score([85.0, 12.0, 92.0, 98.0])
     assert result < 50.0
-
-
-def test_score_boundary_zero_accel():
-    result = score([0.0, 0.0, 30.0, 1.0, 35.0, 38.0])
-    assert result > 50.0
 
 
 def test_rule_based_deterministic():
     """Same input should always produce same output."""
-    features = [0.3, 0.1, 55.0, 8.0, 62.0, 65.0]
+    features = [55.0, 8.0, 62.0, 65.0]
     assert score(features) == score(features)

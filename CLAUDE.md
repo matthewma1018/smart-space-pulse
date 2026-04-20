@@ -10,7 +10,7 @@
 
 **Smart Space Pulse** is an AIoT system that monitors occupancy and noise levels in shared spaces
 (libraries, coworking offices, airport lounges, internet cafes) using M5Stack Core2 edge devices,
-an MQTT broker, a Python cloud processor, and a real-time dashboard.
+AWS IoT Core as the MQTT broker, a Python cloud processor, and a real-time dashboard.
 
 ### Architecture in one sentence
 
@@ -22,8 +22,8 @@ an MQTT broker, a Python cloud processor, and a real-time dashboard.
 
 | Layer | Choice | Rationale |
 |-------|--------|-----------|
-| Edge summarization | RMS accel (m/s²) + SPL audio (dB) | Privacy (no raw audio off-device), bandwidth reduction |
-| Transport | MQTT QoS 1, retain=false | At-least-once delivery; broker handles fan-out |
+| Edge summarization | SPL audio (dB) | Privacy (no raw audio off-device), bandwidth reduction |
+| Transport | AWS IoT Core (MQTT over TLS 1.2, mutual auth) | Managed broker; IAM policies per device; TLS cert-based auth |
 | ML model | LSTM (server-side) | Sequential 30-step windows; easy iteration without reflashing firmware |
 | Decision policy | Hysteresis band 55/65 | Prevents state flickering on borderline readings |
 
@@ -65,7 +65,10 @@ smart-space-pulse/
 │   └── dashboard.py            ← Streamlit app
 │
 ├── config/                     ← Deliverable 5: configuration
-│   └── .env.example
+│   ├── .env.example
+│   ├── iam_policy_sample.json  ← redacted AWS IoT IAM policy (no real ARNs)
+│   └── certs/                  ← placeholder; real certs gitignored
+│       └── .gitkeep
 │
 ├── observability/              ← Deliverable 6
 │   ├── replay.py               ← feed recorded samples back through pipeline
@@ -97,11 +100,10 @@ smart-space-pulse/
 ### Sensor pipeline
 
 ```
-Raw accelerometer (±8 g, ~100 Hz)  →  RMS over N samples  →  float (m/s²)
-Raw microphone (PDM/analog)        →  RMS → 20·log10(·)  →  float dB SPL
+Raw microphone (PDM/analog)  →  RMS → 20·log10(·)  →  float dB SPL
 ```
 
-Both values are computed in a **1-second tumbling window** on-device before being packaged
+Computed in a **1-second tumbling window** on-device before being packaged
 into the outbound MQTT payload.
 
 ### Files to implement
@@ -109,23 +111,21 @@ into the outbound MQTT payload.
 **`device/feature_extractor.py`**
 ```python
 # Must expose:
-def compute_rms_accel(samples: list[float]) -> float: ...   # returns m/s²
 def compute_spl(samples: list[float]) -> float: ...         # returns dB SPL
-def extract_window(accel_buf, audio_buf, window_sec=1) -> dict: ...
-# Returns: {"accel_rms": float, "spl_db": float, "ts_utc": str}
+def extract_window(audio_buf, window_sec=1) -> dict: ...
+# Returns: {"spl_db": float, "ts_utc": str}
 ```
 
 **`device/edge_policy.py`**
 ```python
 # Lightweight on-device fallback rules (no network needed):
-# If SPL > LOUD_THRESHOLD_DB and accel_rms > MOTION_THRESHOLD: state = "busy"
+# If SPL > LOUD_THRESHOLD_DB: state = "busy"
 # Configurable via constants at top of file; thresholds loaded from .env or hardcoded defaults.
 LOUD_THRESHOLD_DB   = 75.0   # dB
-MOTION_THRESHOLD    = 0.5    # m/s²
 ```
 
 **`device/display.py`**
-- LCD: show current state ("Suitable" / "Not Suitable"), score, SPL, accel_rms.
+- LCD: show current state ("Suitable" / "Not Suitable"), score, SPL.
 - LED bar: green (≥65), amber (55–64), red (<55).
 - Buzzer: single chirp on state transition only (not continuous).
 
@@ -158,10 +158,9 @@ ssp/                              # Smart Space Pulse root
 
 ```json
 {
-  "device_id":   "core2-a1b2",
+  "device_id":   "Core2Kit",
   "location_id": "library-1f",
   "ts_utc":      "2026-04-17T14:23:01.000Z",
-  "accel_rms":   0.32,
   "spl_db":      61.4,
   "seq":         4201
 }
@@ -171,7 +170,7 @@ ssp/                              # Smart Space Pulse root
 
 ```json
 {
-  "device_id":   "core2-a1b2",
+  "device_id":   "Core2Kit",
   "location_id": "library-1f",
   "ts_utc":      "2026-04-17T14:23:30.000Z",
   "score":       67,
@@ -185,7 +184,7 @@ ssp/                              # Smart Space Pulse root
 
 ```json
 {
-  "device_id":   "core2-a1b2",
+  "device_id":   "Core2Kit",
   "location_id": "library-1f",
   "ts_utc":      "2026-04-17T14:25:00.000Z",
   "alert_type":  "noise_spike",
@@ -196,7 +195,7 @@ ssp/                              # Smart Space Pulse root
 
 **Schema rules Claude Code must enforce in `tests/test_mqtt_schema.py`:**
 - `ts_utc` must be ISO 8601 with `Z` suffix (UTC only — no local offsets).
-- `device_id` format: `core2-[a-z0-9]{4}`.
+- `device_id` format: `Core2Kit` with optional alphanumeric suffix (e.g. `Core2Kit-a1b2`).
 - All numeric fields must be `float`, never `null`.
 - `state` must be one of `["suitable", "not_suitable", "transitioning"]`.
 
@@ -206,15 +205,17 @@ ssp/                              # Smart Space Pulse root
 
 ### Ingestor (`processing/ingestor.py`)
 
+- Connect to AWS IoT Core endpoint using TLS mutual authentication (client cert + key + CA root).
 - Subscribe to `ssp/#` with QoS 1.
 - Validate schema (raise + log on failure, do not crash).
 - Write raw messages to SQLite `raw_telemetry` table.
+- For local development without AWS, fall back to a plain MQTT connection (`MQTT_USE_TLS=false`).
 
 ### Windower (`processing/windower.py`)
 
 - Consume from storage or subscribe to a second MQTT topic.
 - Collect 30 consecutive telemetry samples per `location_id`.
-- Build feature vector: `[accel_rms_mean, accel_rms_std, spl_mean, spl_std, spl_p90, spl_max]`.
+- Build feature vector: `[spl_mean, spl_std, spl_p90, spl_max]`.
 - Feed to `model/inference.py` → receive score 0–100.
 - Apply hysteresis:
   ```
@@ -247,7 +248,6 @@ CREATE TABLE raw_telemetry (
     device_id    TEXT    NOT NULL,
     location_id  TEXT    NOT NULL,
     ts_utc       TEXT    NOT NULL,   -- ISO 8601
-    accel_rms    REAL    NOT NULL,
     spl_db       REAL    NOT NULL,
     seq          INTEGER NOT NULL
 );
@@ -263,21 +263,74 @@ CREATE TABLE location_state (
 ### Visualization
 
 Streamlit app in `visualization/dashboard.py`:
-- Tab 1: Live view — gauge per location (color-coded), last 5 min time-series of SPL and accel.
+- Tab 1: Live view — gauge per location (color-coded), last 5 min time-series of SPL.
 - Tab 2: Historical — date-picker, histogram of SPL distribution, occupancy heatmap by hour.
 
 ---
 
 ## 6. Configuration & Secrets Handling — Deliverable 5
 
+### AWS IoT Core Setup
+
+The system uses AWS IoT Core as its MQTT broker. Each Core2 device (and the cloud processor)
+authenticates via X.509 certificates.
+
+**Provisioning steps:**
+1. In AWS IoT Core console, create a Thing (e.g. `Core2Kit`).
+2. Generate or attach certificates: download the device certificate, private key, and AWS IoT root CA.
+3. Attach an IAM policy granting publish/subscribe on `ssp/*` topics.
+4. Place certificate files in `config/certs/` (gitignored) and point `.env` vars at them.
+
+### IAM Policy Sample (`config/iam_policy_sample.json`)
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "iot:Connect",
+        "iot:Publish",
+        "iot:Subscribe",
+        "iot:Receive"
+      ],
+      "Resource": [
+        "arn:aws:iot:us-east-1:123456789012:client/Core2Kit*",
+        "arn:aws:iot:us-east-1:123456789012:topic/ssp/*"
+      ]
+    }
+  ]
+}
+```
+
+> **Note:** ARNs above are placeholders — replace with your actual account ID and region.
+
+### Certificate Rotation
+
+To replace a compromised or expired certificate:
+1. Generate a new key pair and CSR (or use AWS IoT console to create one).
+2. Register the new certificate on the Thing in AWS IoT Core.
+3. Replace the files in `config/certs/` — no code changes needed.
+4. Deactivate the old certificate in AWS IoT Core.
+5. Restart the ingestor and/or device firmware.
+
 ### `.env.example` (commit this; never commit `.env`)
 
 ```dotenv
-# MQTT Broker
-MQTT_HOST=localhost
+# AWS IoT Core
+MQTT_HOST=XXXXXXXXXXXXX-ats.iot.us-east-1.amazonaws.com
 MQTT_PORT=8883
-MQTT_USERNAME=
-MQTT_PASSWORD=
+MQTT_USE_TLS=true
+MQTT_CA_CERT=config/certs/AmazonRootCA1.pem
+MQTT_CLIENT_CERT=config/certs/device-cert.pem
+MQTT_CLIENT_KEY=config/certs/device-key.pem
+MQTT_THING_NAME=core2-a1b2
+
+# Fallback: local broker for development without AWS
+# MQTT_HOST=localhost
+# MQTT_PORT=1883
+# MQTT_USE_TLS=false
 
 # Storage
 SQLITE_PATH=data/ssp.db
@@ -298,6 +351,7 @@ LOG_LEVEL=INFO
 *.key
 *.pem
 *.p12
+config/certs/*.crt
 data/raw/
 processing/model/lstm_weights.pt
 __pycache__/
@@ -337,7 +391,7 @@ Log format for all components:
 
 | File | What it tests |
 |------|---------------|
-| `test_feature_extractor.py` | RMS accel, SPL dB math with known inputs |
+| `test_feature_extractor.py` | SPL dB math with known inputs |
 | `test_windower.py` | Hysteresis logic (all three zones), window boundary conditions |
 | `test_inference.py` | Scorer returns float in [0, 100]; rule-based fallback |
 | `test_mqtt_schema.py` | Valid/invalid payloads for all three message types |
@@ -351,9 +405,9 @@ Run: `pytest tests/ -v --tb=short`
 ### `data_samples/sensor_readings.csv`
 
 ```csv
-ts_utc,device_id,location_id,accel_rms,spl_db,seq
-2026-04-17T14:20:00.000Z,core2-a1b2,library-1f,0.21,58.3,1
-2026-04-17T14:20:01.000Z,core2-a1b2,library-1f,0.19,57.1,2
+ts_utc,device_id,location_id,spl_db,seq
+2026-04-17T14:20:00.000Z,Core2Kit,library-1f,58.3,1
+2026-04-17T14:20:01.000Z,Core2Kit,library-1f,57.1,2
 ...
 ```
 
@@ -372,8 +426,8 @@ Include at least 90 rows (3 complete windows) covering both "suitable" and "not 
 3. **Test before marking complete.** Every new function in `processing/` or `device/` must have a
    corresponding test in `tests/`. Run `pytest` before declaring a task done.
 
-4. **Keep the feature vector stable.** The LSTM input shape is fixed at 6 features per window:
-   `[accel_rms_mean, accel_rms_std, spl_mean, spl_std, spl_p90, spl_max]`. Any change must be
+4. **Keep the feature vector stable.** The LSTM input shape is fixed at 4 features per window:
+   `[spl_mean, spl_std, spl_p90, spl_max]`. Any change must be
    coordinated across `windower.py`, `model/train.py`, and `model/inference.py` simultaneously.
 
 5. **Log at the right level.** `DEBUG` for per-sample events, `INFO` for per-window events,

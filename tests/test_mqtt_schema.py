@@ -8,7 +8,7 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-DEVICE_ID_PATTERN = re.compile(r"^core2-[a-z0-9]{4}$")
+DEVICE_ID_PATTERN = re.compile(r"^Core2Kit[a-zA-Z0-9-]*$")
 VALID_STATES = {"suitable", "not_suitable", "transitioning"}
 ISO8601_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$")
 
@@ -16,7 +16,7 @@ ISO8601_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$")
 def validate_telemetry(payload: dict) -> list[str]:
     """Validate a telemetry payload. Returns list of errors."""
     errors = []
-    required = ["device_id", "location_id", "ts_utc", "accel_rms", "spl_db", "seq"]
+    required = ["device_id", "location_id", "ts_utc", "spl_db", "seq"]
 
     for field in required:
         if field not in payload:
@@ -28,7 +28,7 @@ def validate_telemetry(payload: dict) -> list[str]:
     if "ts_utc" in payload and not ISO8601_PATTERN.match(payload["ts_utc"]):
         errors.append(f"ts_utc not ISO 8601 UTC: {payload['ts_utc']}")
 
-    for field in ["accel_rms", "spl_db"]:
+    for field in ["spl_db"]:
         if field in payload and payload[field] is None:
             errors.append(f"{field} must not be null")
         if field in payload and not isinstance(payload[field], (int, float)):
@@ -63,10 +63,9 @@ def validate_state(payload: dict) -> list[str]:
 
 def test_valid_telemetry():
     payload = {
-        "device_id": "core2-a1b2",
+        "device_id": "Core2Kit",
         "location_id": "library-1f",
         "ts_utc": "2026-04-17T14:23:01.000Z",
-        "accel_rms": 0.32,
         "spl_db": 61.4,
         "seq": 4201,
     }
@@ -76,10 +75,9 @@ def test_valid_telemetry():
 
 def test_telemetry_missing_field():
     payload = {
-        "device_id": "core2-a1b2",
+        "device_id": "Core2Kit",
         "location_id": "library-1f",
         "ts_utc": "2026-04-17T14:23:01.000Z",
-        "accel_rms": 0.32,
         # missing spl_db
         "seq": 4201,
     }
@@ -92,7 +90,6 @@ def test_telemetry_bad_device_id():
         "device_id": "device-123",
         "location_id": "library-1f",
         "ts_utc": "2026-04-17T14:23:01.000Z",
-        "accel_rms": 0.32,
         "spl_db": 61.4,
         "seq": 4201,
     }
@@ -102,23 +99,21 @@ def test_telemetry_bad_device_id():
 
 def test_telemetry_null_numeric():
     payload = {
-        "device_id": "core2-a1b2",
+        "device_id": "Core2Kit",
         "location_id": "library-1f",
         "ts_utc": "2026-04-17T14:23:01.000Z",
-        "accel_rms": None,
-        "spl_db": 61.4,
+        "spl_db": None,
         "seq": 4201,
     }
     errors = validate_telemetry(payload)
-    assert any("accel_rms" in e for e in errors)
+    assert any("spl_db" in e for e in errors)
 
 
 def test_telemetry_bad_timestamp():
     payload = {
-        "device_id": "core2-a1b2",
+        "device_id": "Core2Kit",
         "location_id": "library-1f",
         "ts_utc": "2026-04-17T14:23:01+05:00",
-        "accel_rms": 0.32,
         "spl_db": 61.4,
         "seq": 4201,
     }
@@ -130,7 +125,7 @@ def test_telemetry_bad_timestamp():
 
 def test_valid_state_change():
     payload = {
-        "device_id": "core2-a1b2",
+        "device_id": "Core2Kit",
         "location_id": "library-1f",
         "ts_utc": "2026-04-17T14:23:30.000Z",
         "score": 67,

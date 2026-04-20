@@ -20,7 +20,6 @@ Published every 1 second. QoS 1, retain=false.
   "device_id":   "core2-a1b2",
   "location_id": "library-1f",
   "ts_utc":      "2026-04-17T14:23:01.000Z",
-  "accel_rms":   0.32,
   "spl_db":      61.4,
   "seq":         4201
 }
@@ -28,10 +27,9 @@ Published every 1 second. QoS 1, retain=false.
 
 | Field | Type | Constraints |
 |-------|------|-------------|
-| device_id | string | Format: `core2-[a-z0-9]{4}` |
+| device_id | string | Format: `Core2Kit` followed by optional alphanumeric suffix |
 | location_id | string | Non-empty |
 | ts_utc | string | ISO 8601 UTC with `Z` suffix |
-| accel_rms | float | Non-null, ≥ 0 |
 | spl_db | float | Non-null, ≥ 0 |
 | seq | integer | Non-null, monotonic per device |
 

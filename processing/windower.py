@@ -27,17 +27,14 @@ class Windower:
         self.states: dict[str, str] = {}
 
     def _build_feature_vector(self, samples: list[dict]) -> list[float]:
-        """Build 6-element feature vector from a window of samples.
+        """Build 4-element feature vector from a window of samples.
 
-        Returns: [accel_rms_mean, accel_rms_std, spl_mean, spl_std, spl_p90, spl_max]
+        Returns: [spl_mean, spl_std, spl_p90, spl_max]
         """
-        accel = [s["accel_rms"] for s in samples]
         spl = [s["spl_db"] for s in samples]
 
         n = len(samples)
-        accel_mean = sum(accel) / n
         spl_mean = sum(spl) / n
-        accel_std = (sum((x - accel_mean) ** 2 for x in accel) / n) ** 0.5
         spl_std = (sum((x - spl_mean) ** 2 for x in spl) / n) ** 0.5
 
         sorted_spl = sorted(spl)
@@ -45,7 +42,7 @@ class Windower:
         spl_p90 = sorted_spl[min(p90_idx, n - 1)]
         spl_max = max(spl)
 
-        return [accel_mean, accel_std, spl_mean, spl_std, spl_p90, spl_max]
+        return [spl_mean, spl_std, spl_p90, spl_max]
 
     def apply_hysteresis(self, score: float, location_id: str) -> str:
         """Apply hysteresis decision policy.

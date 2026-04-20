@@ -20,7 +20,6 @@ def _init_sqlite(db_path: str):
             device_id    TEXT    NOT NULL,
             location_id  TEXT    NOT NULL,
             ts_utc       TEXT    NOT NULL,
-            accel_rms    REAL    NOT NULL,
             spl_db       REAL    NOT NULL,
             seq          INTEGER NOT NULL
         );
@@ -48,10 +47,10 @@ class Storage:
     def write_telemetry(self, payload: dict) -> None:
         """Write a telemetry payload to storage."""
         self._conn.execute(
-            "INSERT INTO raw_telemetry (device_id, location_id, ts_utc, accel_rms, spl_db, seq) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO raw_telemetry (device_id, location_id, ts_utc, spl_db, seq) "
+            "VALUES (?, ?, ?, ?, ?)",
             (payload["device_id"], payload["location_id"], payload["ts_utc"],
-             payload["accel_rms"], payload["spl_db"], payload["seq"]),
+             payload["spl_db"], payload["seq"]),
         )
         self._conn.commit()
 

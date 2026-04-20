@@ -1,5 +1,5 @@
 {
-  "device_id": "core2-a1b2",
+  "device_id": "Core2Kit",
   "location_id": "library-1f",
   "ts_utc": "2026-04-17T14:25:00.000Z",
   "alert_type": "noise_spike",

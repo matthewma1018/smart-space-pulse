@@ -1,8 +1,11 @@
 .env
+secrets.py
 *.key
 *.pem
 *.p12
+config/certs/*.crt
 data/raw/
+data/ssp.db
 processing/model/lstm_weights.pt
 __pycache__/
 *.pyc
