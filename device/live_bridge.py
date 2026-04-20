@@ -1,8 +1,8 @@
 """
 Smart Space Pulse — Live Bridge
 
-Records SPL from the Core2 via serial AND feeds the local pipeline
-in real-time. The Streamlit dashboard picks up new data from SQLite on refresh.
+Records SPL from the Core2 via serial, publishes to AWS IoT Core via MQTT,
+AND feeds the local pipeline in real-time.
 
 Usage:
     python device/live_bridge.py                      # runs until Ctrl-C
@@ -14,10 +14,16 @@ Then open in another terminal:
 import argparse
 import json
 import os
+import ssl
 import serial
 import serial.tools.list_ports
 import sys
 import time
+
+from dotenv import load_dotenv
+load_dotenv()
+
+import paho.mqtt.client as mqtt
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -25,6 +31,32 @@ from processing.storage import Storage
 from processing.windower import Windower
 
 BAUD = 115200
+
+
+def connect_aws_mqtt():
+    """Connect to AWS IoT Core and return MQTT client."""
+    host = os.getenv("MQTT_HOST")
+    port = int(os.getenv("MQTT_PORT", "8883"))
+    ca_path = os.getenv("MQTT_CA_CERT")
+    cert_path = os.getenv("MQTT_CLIENT_CERT")
+    key_path = os.getenv("MQTT_CLIENT_KEY")
+
+    if not all([host, ca_path, cert_path, key_path]):
+        print("[WARN ] AWS MQTT not configured, skipping cloud publish")
+        return None
+
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+    ctx.load_verify_locations(ca_path)
+    ctx.load_cert_chain(cert_path, key_path)
+
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="Core2Kit-bridge")
+    client.tls_set_context(ctx)
+    client.tls_insecure_set(False)
+    client.connect(host, port, keepalive=60)
+    client.loop_start()
+    print(f"[INFO ] Connected to AWS IoT Core at {host}:{port}")
+    return client
 
 
 def find_core2_port():
@@ -106,12 +138,13 @@ def main():
 
     print(f"[INFO ] Core2 on {port}")
 
-    # Clear old DB for clean start
-    db_path = os.getenv("SQLITE_PATH", "data/ssp.db")
-    if os.path.exists(db_path):
-        os.remove(db_path)
+    mqtt_client = connect_aws_mqtt()
 
     storage = Storage()
+    storage._conn.execute("DELETE FROM raw_telemetry")
+    storage._conn.execute("DELETE FROM location_state")
+    storage._conn.commit()
+    print("[INFO ] Cleared old data from database")
     windower = Windower()
 
     ser = serial.Serial(port, BAUD, timeout=5)
@@ -157,6 +190,15 @@ def main():
             storage.write_telemetry(msg)
             count += 1
 
+            # Publish to AWS IoT Core
+            if mqtt_client:
+                location_id = msg.get("location_id", "library-1f")
+                topic = f"ssp/{location_id}/telemetry"
+                try:
+                    mqtt_client.publish(topic, json.dumps(msg), qos=1)
+                except Exception as e:
+                    print(f"  [WARN ] MQTT publish failed: {e}")
+
             # Run through windower
             result = windower.ingest(msg)
             if result:
@@ -173,6 +215,8 @@ def main():
         print(f"\n[INFO ] Stopped. {count} readings processed.")
     finally:
         storage.close()
+        if mqtt_client:
+            mqtt_client.disconnect()
         ser.close()
 
 
