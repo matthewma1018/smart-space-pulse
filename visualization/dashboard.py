@@ -12,7 +12,7 @@ import streamlit as st
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from cloud.dynamodb_storage import DynamoDBStorage
-from processing.model.inference import score_from_samples, score_logistic_from_samples
+from processing.model.inference import score_from_samples
 
 REFRESH_INTERVAL = 3
 
@@ -381,13 +381,12 @@ else:
             "High noise"     if spl_val is not None else ""
         )
 
-        spl_30 = load_last_30_spl(storage, s["location_id"])
-        if spl_30:
-            lstm_score     = score_from_samples(spl_30)
-            logistic_score = score_logistic_from_samples(spl_30)
-        else:
-            lstm_score = logistic_score = None
-        compare = model_compare_html(lstm_score, logistic_score)
+        # Logistic score comes from the cloud Lambda (already in ssp-state).
+        # LSTM still runs locally — no cloud LSTM until we move to a
+        # container-image Lambda with PyTorch.
+        spl_30     = load_last_30_spl(storage, s["location_id"])
+        lstm_score = score_from_samples(spl_30) if spl_30 else None
+        compare    = model_compare_html(lstm_score, s["score"])
 
         with cols[i % 2]:
             st.markdown(
