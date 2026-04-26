@@ -1,6 +1,7 @@
 CLAUDE.md
 processing/model/generate_recorded.py
 data_samples/samp_*.jsonl
+cloud/build/
 .env
 secrets.py
 *.key
