@@ -2,7 +2,6 @@
 Smart Space Pulse — Customer Dashboard
 """
 import os
-import sqlite3
 import sys
 import time
 from datetime import datetime, timezone
@@ -12,9 +11,9 @@ import streamlit as st
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from cloud.dynamodb_storage import DynamoDBStorage
 from processing.model.inference import score_from_samples, score_logistic_from_samples
 
-DB_PATH = os.getenv("SQLITE_PATH", "data/ssp.db")
 REFRESH_INTERVAL = 3
 
 LOCATION_NAMES = {
@@ -161,46 +160,40 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-# ── DB helpers ────────────────────────────────────────────────────────────────
+# ── DynamoDB helpers ──────────────────────────────────────────────────────────
 
 @st.cache_resource
-def get_connection():
-    return sqlite3.connect(DB_PATH, check_same_thread=False)
+def get_storage():
+    return DynamoDBStorage()
 
 
-def load_current_states(conn):
-    rows = conn.execute(
-        "SELECT location_id, state, score, updated_at FROM location_state"
-    ).fetchall()
-    return [{"location_id": r[0], "state": r[1], "score": r[2], "updated_at": r[3]}
-            for r in rows]
+def load_current_states(storage):
+    return [
+        {
+            "location_id": it["location_id"],
+            "state":       it["state"],
+            "score":       float(it["score"]),
+            "updated_at":  it["updated_at"],
+        }
+        for it in storage.list_states()
+    ]
 
 
-def load_recent_telemetry(conn, location_id, limit=90):
-    rows = conn.execute(
-        "SELECT ts_utc, spl_db FROM raw_telemetry "
-        "WHERE location_id=? ORDER BY id DESC LIMIT ?",
-        (location_id, limit),
-    ).fetchall()
-    return [{"ts_utc": r[0], "spl_db": r[1]} for r in reversed(rows)]
+def load_recent_telemetry(storage, location_id, limit=90):
+    return storage.query_recent(location_id, n=limit)
 
 
-def load_last_30_spl(conn, location_id):
-    rows = conn.execute(
-        "SELECT spl_db FROM raw_telemetry WHERE location_id=? ORDER BY id DESC LIMIT 30",
-        (location_id,),
-    ).fetchall()
-    samples = [r[0] for r in reversed(rows)]
+def load_last_30_spl(storage, location_id):
+    items = storage.query_recent(location_id, n=30)
+    samples = [it["spl_db"] for it in items]
     return samples if len(samples) == 30 else None
 
 
-def load_latest_spl(conn, location_id):
-    row = conn.execute(
-        "SELECT spl_db, ts_utc FROM raw_telemetry "
-        "WHERE location_id=? ORDER BY id DESC LIMIT 1",
-        (location_id,),
-    ).fetchone()
-    return (row[0], row[1]) if row else (None, None)
+def load_latest_spl(storage, location_id):
+    items = storage.query_recent(location_id, n=1)
+    if not items:
+        return None, None
+    return items[-1]["spl_db"], items[-1]["ts_utc"]
 
 
 # ── Widget helpers ────────────────────────────────────────────────────────────
@@ -323,7 +316,7 @@ def make_noise_chart(data):
 
 # ── App ───────────────────────────────────────────────────────────────────────
 
-conn = get_connection()
+storage = get_storage()
 
 hdr_l, hdr_r = st.columns([3, 1])
 with hdr_l:
@@ -342,7 +335,7 @@ with hdr_r:
 
 st.markdown("<div style='height:0.6rem'></div>", unsafe_allow_html=True)
 
-states = load_current_states(conn)
+states = load_current_states(storage)
 
 if not states:
     st.markdown(
@@ -377,7 +370,7 @@ else:
 
     cols = st.columns(2)
     for i, s in enumerate(states):
-        spl_val, _ = load_latest_spl(conn, s["location_id"])
+        spl_val, _ = load_latest_spl(storage, s["location_id"])
         card_cls, status_txt, status_cls = card_attrs(s["state"])
         upd      = time_ago(s["updated_at"])
         spl_text = f"{spl_val:.1f} dB" if spl_val is not None else "—"
@@ -388,7 +381,7 @@ else:
             "High noise"     if spl_val is not None else ""
         )
 
-        spl_30 = load_last_30_spl(conn, s["location_id"])
+        spl_30 = load_last_30_spl(storage, s["location_id"])
         if spl_30:
             lstm_score     = score_from_samples(spl_30)
             logistic_score = score_logistic_from_samples(spl_30)
@@ -420,7 +413,7 @@ else:
         key="live_sel",
         label_visibility="collapsed",
     )
-    recent = load_recent_telemetry(conn, location_ids[sel_idx], limit=90)
+    recent = load_recent_telemetry(storage, location_ids[sel_idx], limit=90)
     st.plotly_chart(make_noise_chart(recent), use_container_width=True)
 
 time.sleep(REFRESH_INTERVAL)

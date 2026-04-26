@@ -76,6 +76,12 @@ class DynamoDBStorage:
 
     def query_recent_spl(self, location_id: str, n: int = 30) -> list[float]:
         """Return the n most recent spl_db readings (oldest first)."""
+        return [it["spl_db"] for it in self.query_recent(location_id, n)]
+
+    def query_recent(self, location_id: str, n: int = 30) -> list[dict]:
+        """Return the n most recent telemetry items (oldest first), each
+        as {"ts_utc": str, "spl_db": float}.
+        """
         resp = self.telemetry.query(
             KeyConditionExpression="location_id = :loc",
             ExpressionAttributeValues={":loc": location_id},
@@ -84,7 +90,7 @@ class DynamoDBStorage:
             ProjectionExpression="ts_utc, spl_db",
         )
         items = list(reversed(resp.get("Items", [])))
-        return [float(it["spl_db"]) for it in items]
+        return [{"ts_utc": it["ts_utc"], "spl_db": float(it["spl_db"])} for it in items]
 
     def get_state(self, location_id: str) -> dict | None:
         resp = self.state.get_item(Key={"location_id": location_id})

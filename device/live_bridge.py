@@ -28,7 +28,6 @@ import paho.mqtt.client as mqtt
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from processing.storage import Storage
 
 BAUD = 115200
 
@@ -163,13 +162,6 @@ def main():
     print(f"[INFO ] Core2 on {port}")
 
     mqtt_client = connect_aws_mqtt()
-
-    storage = Storage()
-    storage._conn.execute("DELETE FROM raw_telemetry")
-    storage._conn.execute("DELETE FROM location_state")
-    storage._conn.commit()
-    storage.close()
-    print("[INFO ] Cleared old data from database")
 
     ser = serial.Serial(port, BAUD, timeout=2)  # shorter timeout so watchdog fires promptly
     time.sleep(0.5)
