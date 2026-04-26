@@ -1,96 +1,115 @@
 """
 Smart Space Pulse — LSTM Model Training
 
-Trains a 2-layer LSTM on windowed sensor features to predict occupancy score (0–100).
+Trains a binary-classifier LSTM on 30-sample SPL windows to predict
+suitability (suitable / not_suitable). Output is P(suitable) in [0, 1];
+inference.py scales it to a 0-100 score.
+
+Data source: JSONL windows written by processing/model/generate_synthetic.py
+(both data_samples/recorded/ and data_samples/synthetic/).
+
+Each input sample is a (30, 5) tensor: 30 timesteps of 5 features per step.
+Per-timestep features are computed on a short rolling sub-window so the
+LSTM sees temporal evolution rather than one static feature vector repeated.
 
 Usage:
-    python processing/model/train.py --seq-len 30 --hidden 64 --layers 2 --epochs 50 --lr 0.001
+    python -m processing.model.train --epochs 40
 """
 import argparse
-import csv
+import glob
+import json
 import logging
 import os
+import random
 import sys
 
 import torch
 import torch.nn as nn
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, random_split
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 logger = logging.getLogger("train")
 
-INPUT_FEATURES = 4  # spl_mean, spl_std, spl_p90, spl_max
+INPUT_FEATURES = 5  # spl_mean, spl_std, spl_p90, spl_max, spl_spike_count
+SEQ_LEN = 30
+ROLLING_SUB_WINDOW = 8  # per-timestep features computed from last N samples
+
+
+def _per_timestep_features(spl: list[float], sub_window: int = ROLLING_SUB_WINDOW) -> list[list[float]]:
+    """Compute one 5-feature vector per timestep using a rolling sub-window.
+
+    For timestep t, the features are computed over spl[max(0, t-sub_window+1) : t+1].
+    """
+    features = []
+    for t in range(len(spl)):
+        lo = max(0, t - sub_window + 1)
+        w = spl[lo:t + 1]
+        n = len(w)
+        mean = sum(w) / n
+        std = (sum((x - mean) ** 2 for x in w) / n) ** 0.5
+        sw = sorted(w)
+        p90 = sw[min(int(0.9 * n), n - 1)]
+        mx = max(w)
+        if std < 1e-6:
+            spikes = 0
+        else:
+            thresh = mean + 1.5 * std
+            spikes = sum(1 for x in w if x > thresh)
+        features.append([mean, std, p90, mx, float(spikes)])
+    return features
+
+
+def _label_from_path(path: str) -> int:
+    """Derive binary label from filename convention.
+
+    rec_suit_*  / syn_suit_*  -> 1 (suitable)
+    rec_notsuit_* / syn_notsuit_* -> 0 (not_suitable)
+    """
+    name = os.path.basename(path)
+    if "_suit_" in name:
+        return 1
+    if "_notsuit_" in name:
+        return 0
+    raise ValueError(f"Cannot infer label from filename: {name}")
 
 
 class OccupancyDataset(Dataset):
-    """Dataset of sliding windows over sensor features with rule-based labels."""
+    """Loads 30-sample SPL windows from JSONL and emits (seq, features) tensors."""
 
-    def __init__(self, csv_path: str, seq_len: int = 30):
-        self.seq_len = seq_len
-        self.samples, self.labels = self._load_csv(csv_path)
-
-    def _load_csv(self, path: str):
-        rows = []
-        with open(path, "r") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                rows.append({
-                    "spl_db": float(row["spl_db"]),
-                })
-
-        if len(rows) < self.seq_len:
-            raise ValueError(f"CSV has {len(rows)} rows, need at least {self.seq_len}")
-
-        # Build sliding windows and compute features + label for each window
-        samples = []
-        labels = []
-        for i in range(len(rows) - self.seq_len + 1):
-            window = rows[i:i + self.seq_len]
-            features = self._extract_features(window)
-            label = self._compute_label(window)
-            samples.append(features)
-            labels.append(label)
-
-        return samples, labels
-
-    @staticmethod
-    def _extract_features(window: list[dict]) -> list[float]:
-        spl = [s["spl_db"] for s in window]
-        n = len(window)
-        spl_mean = sum(spl) / n
-        spl_std = (sum((x - spl_mean) ** 2 for x in spl) / n) ** 0.5
-        sorted_spl = sorted(spl)
-        spl_p90 = sorted_spl[int(0.9 * n)]
-        spl_max = max(spl)
-        return [spl_mean, spl_std, spl_p90, spl_max]
-
-    @staticmethod
-    def _compute_label(window: list[dict]) -> float:
-        """Generate a label using the same rule-based logic as inference.py."""
-        spl_mean = sum(s["spl_db"] for s in window) / len(window)
-        sorted_spl = sorted(s["spl_db"] for s in window)
-        spl_p90 = sorted_spl[int(0.9 * len(window))]
-
-        noise_penalty = min(spl_mean / 100.0, 1.0) * 50
-        spike_penalty = max(0, (spl_p90 - 70) / 30.0) * 20
-        score = 100.0 - noise_penalty - spike_penalty
-        return max(0.0, min(100.0, score))
+    def __init__(self, jsonl_paths: list[str]):
+        self.paths = jsonl_paths
+        self.samples = []
+        self.labels = []
+        for path in jsonl_paths:
+            spl = []
+            with open(path) as f:
+                for line in f:
+                    spl.append(float(json.loads(line)["spl_db"]))
+            if len(spl) != SEQ_LEN:
+                continue
+            features = _per_timestep_features(spl)
+            self.samples.append(features)
+            self.labels.append(_label_from_path(path))
+        logger.info("Loaded %d windows (suitable=%d, not_suitable=%d)",
+                    len(self.samples),
+                    sum(1 for y in self.labels if y == 1),
+                    sum(1 for y in self.labels if y == 0))
 
     def __len__(self):
         return len(self.samples)
 
     def __getitem__(self, idx):
-        x = torch.tensor(self.samples[idx], dtype=torch.float32)
+        x = torch.tensor(self.samples[idx], dtype=torch.float32)  # (30, 5)
         y = torch.tensor(self.labels[idx], dtype=torch.float32)
         return x, y
 
 
 class OccupancyLSTM(nn.Module):
-    """LSTM regression model: 4 features → occupancy score 0–100."""
+    """LSTM binary classifier: (batch, 30, 5) -> P(suitable) in [0, 1]."""
 
-    def __init__(self, input_size: int = INPUT_FEATURES, hidden_size: int = 64,
-                 num_layers: int = 2, dropout: float = 0.2):
+    def __init__(self, input_size: int = INPUT_FEATURES, hidden_size: int = 32,
+                 num_layers: int = 1, dropout: float = 0.2):
         super().__init__()
         self.lstm = nn.LSTM(
             input_size=input_size,
@@ -100,85 +119,120 @@ class OccupancyLSTM(nn.Module):
             dropout=dropout if num_layers > 1 else 0.0,
         )
         self.fc = nn.Sequential(
-            nn.Linear(hidden_size, 32),
+            nn.Linear(hidden_size, 16),
             nn.ReLU(),
             nn.Dropout(dropout),
-            nn.Linear(32, 1),
+            nn.Linear(16, 1),
+            nn.Sigmoid(),
         )
 
     def forward(self, x):
-        # x shape: (batch, seq_len, input_size) — but our dataset returns (seq_len, input_size)
         if x.dim() == 2:
-            x = x.unsqueeze(0)  # add batch dim
+            x = x.unsqueeze(0)
         lstm_out, _ = self.lstm(x)
-        last_step = lstm_out[:, -1, :]  # (batch, hidden_size)
+        last_step = lstm_out[:, -1, :]
         return self.fc(last_step).squeeze(-1)
 
 
+def collect_paths(roots: list[str]) -> list[str]:
+    paths = []
+    for r in roots:
+        paths.extend(sorted(glob.glob(os.path.join(r, "*.jsonl"))))
+    return paths
+
+
 def train(args):
-    dataset = OccupancyDataset(args.data, seq_len=args.seq_len)
-    dataloader = DataLoader(dataset, batch_size=16, shuffle=True)
+    random.seed(args.seed)
+    torch.manual_seed(args.seed)
 
-    model = OccupancyLSTM(
-        input_size=INPUT_FEATURES,
-        hidden_size=args.hidden,
-        num_layers=args.layers,
-    )
+    paths = collect_paths(args.data_dirs)
+    if not paths:
+        raise RuntimeError(f"No JSONL windows found in {args.data_dirs}")
+    random.shuffle(paths)
+
+    dataset = OccupancyDataset(paths)
+    n_val = max(1, int(len(dataset) * args.val_frac))
+    n_train = len(dataset) - n_val
+    train_ds, val_ds = random_split(dataset, [n_train, n_val],
+                                    generator=torch.Generator().manual_seed(args.seed))
+
+    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True)
+    val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False)
+
+    model = OccupancyLSTM(hidden_size=args.hidden, num_layers=args.layers)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
-    criterion = nn.MSELoss()
+    criterion = nn.BCELoss()
 
-    logger.info("Training LSTM: %d samples, %d parameters",
-                len(dataset), sum(p.numel() for p in model.parameters()))
+    logger.info("Training LSTM: %d train / %d val, %d parameters",
+                n_train, n_val, sum(p.numel() for p in model.parameters()))
 
+    best_val = float("inf")
     for epoch in range(1, args.epochs + 1):
         model.train()
-        epoch_loss = 0.0
-        for batch_x, batch_y in dataloader:
-            # batch_x: (batch, 4) — each row is a single window's feature vector
-            # Reshape to (batch, seq_len=1, input_size=4) for LSTM
-            batch_x = batch_x.unsqueeze(1)
-
+        train_loss = 0.0
+        correct = 0
+        total = 0
+        for x, y in train_loader:
             optimizer.zero_grad()
-            output = model(batch_x)
-            loss = criterion(output, batch_y)
+            pred = model(x)
+            loss = criterion(pred, y)
             loss.backward()
             optimizer.step()
-            epoch_loss += loss.item()
+            train_loss += loss.item() * x.size(0)
+            correct += ((pred >= 0.5).float() == y).sum().item()
+            total += x.size(0)
+        train_loss /= total
+        train_acc = correct / total
 
-        avg_loss = epoch_loss / len(dataloader)
-        if epoch % 10 == 0 or epoch == 1:
-            logger.info("Epoch %d/%d  loss=%.4f", epoch, args.epochs, avg_loss)
+        model.eval()
+        val_loss = 0.0
+        v_correct = 0
+        v_total = 0
+        with torch.no_grad():
+            for x, y in val_loader:
+                pred = model(x)
+                loss = criterion(pred, y)
+                val_loss += loss.item() * x.size(0)
+                v_correct += ((pred >= 0.5).float() == y).sum().item()
+                v_total += x.size(0)
+        val_loss /= v_total
+        val_acc = v_correct / v_total
 
-    os.makedirs(os.path.dirname(args.output), exist_ok=True)
-    torch.save(model.state_dict(), args.output)
-    logger.info("Model saved to %s", args.output)
+        if val_loss < best_val:
+            best_val = val_loss
+            os.makedirs(os.path.dirname(args.output), exist_ok=True)
+            torch.save(model.state_dict(), args.output)
+
+        if epoch == 1 or epoch % 5 == 0 or epoch == args.epochs:
+            logger.info("Epoch %2d/%d  train_loss=%.4f acc=%.3f  val_loss=%.4f acc=%.3f",
+                        epoch, args.epochs, train_loss, train_acc, val_loss, val_acc)
+
+    logger.info("Best val loss=%.4f — model saved to %s", best_val, args.output)
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Train LSTM occupancy classifier")
-    parser.add_argument("--seq-len", type=int, default=30, help="Sequence length (window size)")
-    parser.add_argument("--hidden", type=int, default=64, help="LSTM hidden units")
-    parser.add_argument("--layers", type=int, default=2, help="Number of LSTM layers")
-    parser.add_argument("--epochs", type=int, default=50, help="Training epochs")
-    parser.add_argument("--lr", type=float, default=0.001, help="Learning rate")
-    parser.add_argument("--data", type=str, default="data_samples/sensor_readings.csv",
-                        help="Path to training CSV")
-    parser.add_argument("--output", type=str, default="processing/model/lstm_weights.pt",
-                        help="Output model path")
+    parser = argparse.ArgumentParser(description="Train binary LSTM occupancy classifier")
+    parser.add_argument("--data-dirs", nargs="+",
+                        default=["data_samples/recorded", "data_samples/synthetic"],
+                        help="Directories containing JSONL windows")
+    parser.add_argument("--epochs", type=int, default=40)
+    parser.add_argument("--batch-size", type=int, default=32)
+    parser.add_argument("--hidden", type=int, default=32)
+    parser.add_argument("--layers", type=int, default=1)
+    parser.add_argument("--lr", type=float, default=0.002)
+    parser.add_argument("--val-frac", type=float, default=0.2)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--output", default="processing/model/lstm_weights.pt")
     return parser.parse_args()
 
 
 def main():
-    args = parse_args()
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s.000Z [%(levelname)-5s] [%(name)s] %(message)s",
         datefmt="%Y-%m-%dT%H:%M:%S",
     )
-    logger.info("Config: seq_len=%d, hidden=%d, layers=%d, epochs=%d, lr=%.4f",
-                args.seq_len, args.hidden, args.layers, args.epochs, args.lr)
-    logger.info("Data: %s", args.data)
-    logger.info("Output: %s", args.output)
+    args = parse_args()
     train(args)
 
 

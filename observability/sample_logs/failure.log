@@ -1,9 +1,0 @@
-2026-04-17T14:20:00.000Z [INFO ] [ingestor] Connected to MQTT broker at localhost:1883 (rc=0)
-2026-04-17T14:20:01.000Z [INFO ] [ingestor] Received telemetry from Core2Kit seq=1
-2026-04-17T14:20:02.000Z [ERROR] [ingestor] Schema error on Core2Kit: missing field 'spl_db'
-2026-04-17T14:20:03.000Z [WARN ] [ingestor] Skipping malformed message on topic ssp/library-1f/telemetry
-2026-04-17T14:20:04.000Z [INFO ] [ingestor] Received telemetry from Core2Kit seq=3
-2026-04-17T14:20:05.000Z [ERROR] [ingestor] Schema error on Core2Kit: ts_utc is not ISO 8601
-2026-04-17T14:20:06.000Z [WARN ] [ingestor] Skipping malformed message on topic ssp/library-1f/telemetry
-2026-04-17T14:20:07.000Z [INFO ] [ingestor] Received telemetry from Core2Kit seq=5
-2026-04-17T14:20:30.000Z [INFO ] [windower] location=library-1f score=71.0 state=suitable

@@ -1,3 +1,6 @@
+CLAUDE.md
+processing/model/generate_recorded.py
+data_samples/samp_*.jsonl
 .env
 secrets.py
 *.key
@@ -7,6 +10,9 @@ config/certs/*.crt
 data/raw/
 data/ssp.db
 processing/model/lstm_weights.pt
+processing/model/logistic_model.joblib
 __pycache__/
 *.pyc
+*.log
 .DS_Store
+.claude/

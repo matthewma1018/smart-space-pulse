@@ -27,9 +27,12 @@ class Windower:
         self.states: dict[str, str] = {}
 
     def _build_feature_vector(self, samples: list[dict]) -> list[float]:
-        """Build 4-element feature vector from a window of samples.
+        """Build 5-element feature vector from a window of samples.
 
-        Returns: [spl_mean, spl_std, spl_p90, spl_max]
+        Returns: [spl_mean, spl_std, spl_p90, spl_max, spl_spike_count]
+
+        spl_spike_count is the number of samples exceeding mean + 1.5*std —
+        a ZCR-like burstiness proxy since we only see 1 Hz SPL, not raw audio.
         """
         spl = [s["spl_db"] for s in samples]
 
@@ -42,7 +45,13 @@ class Windower:
         spl_p90 = sorted_spl[min(p90_idx, n - 1)]
         spl_max = max(spl)
 
-        return [spl_mean, spl_std, spl_p90, spl_max]
+        if spl_std < 1e-6:
+            spl_spike_count = 0
+        else:
+            thresh = spl_mean + 1.5 * spl_std
+            spl_spike_count = sum(1 for x in spl if x > thresh)
+
+        return [spl_mean, spl_std, spl_p90, spl_max, float(spl_spike_count)]
 
     def apply_hysteresis(self, score: float, location_id: str) -> str:
         """Apply hysteresis decision policy.
@@ -81,27 +90,30 @@ class Windower:
             window = self.buffers[location_id][:self.window_size]
             self.buffers[location_id] = self.buffers[location_id][self.window_size:]
 
-            feature_vector = self._build_feature_vector(window)
-
-            # Use rule-based scorer as fallback
-            from processing.model.inference import score
-            raw_score = score(feature_vector)
+            # LSTM was trained on per-timestep rolling features over the raw
+            # SPL sequence; pass samples so inference can build that shape.
+            from processing.model.inference import score_from_samples
+            spl_samples = [s["spl_db"] for s in window]
+            raw_score = score_from_samples(spl_samples)
 
             prev_state = self.states.get(location_id, "not_suitable")
             new_state = self.apply_hysteresis(raw_score, location_id)
+            changed = new_state != prev_state
 
-            logger.info("location=%s score=%.1f state=%s", location_id, raw_score, new_state)
+            logger.info("location=%s score=%.1f state=%s%s",
+                        location_id, raw_score, new_state,
+                        " (changed)" if changed else "")
 
-            if new_state != prev_state:
-                return {
-                    "device_id": sample["device_id"],
-                    "location_id": location_id,
-                    "ts_utc": sample["ts_utc"],
-                    "score": round(raw_score, 1),
-                    "state": new_state,
-                    "prev_state": prev_state,
-                    "window_sec": self.window_size,
-                }
+            return {
+                "device_id": sample["device_id"],
+                "location_id": location_id,
+                "ts_utc": sample["ts_utc"],
+                "score": round(raw_score, 1),
+                "state": new_state,
+                "prev_state": prev_state,
+                "window_sec": self.window_size,
+                "changed": changed,
+            }
         return None
 
 

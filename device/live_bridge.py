@@ -19,6 +19,7 @@ import serial
 import serial.tools.list_ports
 import sys
 import time
+from datetime import datetime, timezone
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -28,7 +29,6 @@ import paho.mqtt.client as mqtt
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from processing.storage import Storage
-from processing.windower import Windower
 
 BAUD = 115200
 
@@ -90,13 +90,17 @@ def paste_exec(ser, code):
     ser.write(b"\x04")
 
 
-# Streaming code: records one SPL reading, prints as JSON, repeats.
-# Runs in an infinite loop on the device, outputting one JSON line per second.
+# Streaming code injected into the Core2 via paste-exec.
+# Measures SPL, updates the LCD display, and prints one JSON line per second.
 STREAMING_CODE = """\
 import M5
 from M5 import *
 import math,struct,time,ujson
 M5.begin()
+Widgets.fillScreen(0x222222)
+Widgets.Label("Smart Space Pulse",10,8,1.0,0xffffff,0x222222,Widgets.FONTS.DejaVu18)
+lbl_spl=Widgets.Label("SPL: -- dB",10,55,1.0,0x2ecc71,0x222222,Widgets.FONTS.DejaVu18)
+lbl_lvl=Widgets.Label("Initializing...",10,90,1.0,0xaaaaaa,0x222222,Widgets.FONTS.DejaVu18)
 Mic.begin()
 Mic.setSampleRate(8000)
 buf=bytearray(16000)
@@ -118,11 +122,31 @@ while True:
     ts='{}-{:02d}-{:02d}T{:02d}:{:02d}:{:02d}.000Z'.format(t[0],t[1],t[2],t[3],t[4],t[5])
     line=ujson.dumps({'device_id':'Core2Kit','location_id':'library-1f','ts_utc':ts,'spl_db':spl,'seq':seq})
     print(line)
+    lbl_spl.setText('SPL: {:.1f} dB'.format(spl))
+    if spl<55:
+        lbl_lvl.setColor(0x2ecc71,0x222222)
+        lbl_lvl.setText('Quiet')
+    elif spl<70:
+        lbl_lvl.setColor(0xf39c12,0x222222)
+        lbl_lvl.setText('Moderate')
+    else:
+        lbl_lvl.setColor(0xe74c3c,0x222222)
+        lbl_lvl.setText('Loud')
     seq+=1
     el=time.ticks_diff(time.ticks_ms(),t0)
     if el<1000:
         time.sleep_ms(1000-el)
 """
+
+
+WATCHDOG_TIMEOUT = 12   # seconds without a valid reading before re-injecting
+REINJECT_COOLDOWN = 5   # seconds to wait after re-injection before reading again
+
+
+def _inject_and_wait(ser):
+    print("[WARN ] Watchdog triggered — re-injecting streaming code onto device")
+    paste_exec(ser, STREAMING_CODE)
+    time.sleep(REINJECT_COOLDOWN)
 
 
 def main():
@@ -144,31 +168,35 @@ def main():
     storage._conn.execute("DELETE FROM raw_telemetry")
     storage._conn.execute("DELETE FROM location_state")
     storage._conn.commit()
+    storage.close()
     print("[INFO ] Cleared old data from database")
-    windower = Windower()
 
-    ser = serial.Serial(port, BAUD, timeout=5)
+    ser = serial.Serial(port, BAUD, timeout=2)  # shorter timeout so watchdog fires promptly
     time.sleep(0.5)
 
-    # Send streaming code to device
     print("[INFO ] Starting streaming on device...")
     paste_exec(ser, STREAMING_CODE)
-    time.sleep(3)  # wait for device to init and start outputting
+    time.sleep(3)
 
     print("[INFO ] Live bridge running. Dashboard will update on refresh.")
     print("[INFO ] Make noise near the device to see state changes!")
     print("[INFO ] Press Ctrl-C to stop.\n")
 
     start_time = time.time()
+    last_reading = time.time()
     count = 0
-    current_state = "not_suitable"
 
     try:
         while True:
             if args.duration > 0 and time.time() - start_time > args.duration:
                 break
 
-            # Read a line from device serial output
+            # Watchdog: re-inject if device goes silent
+            if time.time() - last_reading > WATCHDOG_TIMEOUT:
+                _inject_and_wait(ser)
+                last_reading = time.time()
+                continue
+
             raw = ser.readline()
             if not raw:
                 continue
@@ -182,15 +210,16 @@ def main():
             except json.JSONDecodeError:
                 continue
 
-            # Validate basic fields
             if "spl_db" not in msg:
                 continue
 
-            # Write to SQLite
-            storage.write_telemetry(msg)
+            last_reading = time.time()
+
+            # Overwrite device timestamp with host UTC (Core2 RTC is unsynchronized)
+            msg["ts_utc"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
             count += 1
 
-            # Publish to AWS IoT Core
             if mqtt_client:
                 location_id = msg.get("location_id", "library-1f")
                 topic = f"ssp/{location_id}/telemetry"
@@ -199,22 +228,12 @@ def main():
                 except Exception as e:
                     print(f"  [WARN ] MQTT publish failed: {e}")
 
-            # Run through windower
-            result = windower.ingest(msg)
-            if result:
-                storage.update_state(result["location_id"], result["state"], result["score"])
-                current_state = result["state"]
-                print(f"  >>> STATE: {result['prev_state']} -> {result['state']} "
-                      f"(score={result['score']}) <<<")
-
-            # Print every reading
-            if count % 5 == 0 or result:
-                print(f"  [{count}] SPL={msg['spl_db']:.1f} dB  state={current_state}")
+            if count % 5 == 0:
+                print(f"  [{count}] SPL={msg['spl_db']:.1f} dB")
 
     except KeyboardInterrupt:
         print(f"\n[INFO ] Stopped. {count} readings processed.")
     finally:
-        storage.close()
         if mqtt_client:
             mqtt_client.disconnect()
         ser.close()

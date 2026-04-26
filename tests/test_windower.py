@@ -71,3 +71,19 @@ def test_ingest_returns_state_after_window():
     assert result is not None
     assert "state" in result
     assert result["state"] == "suitable"
+    assert result["changed"] is True  # first window always changes from default
+
+
+def test_ingest_returns_result_on_unchanged_state():
+    """Window result is always returned so DB stays current even without state change."""
+    w = Windower(window_size=30)
+    # Fill first window -> suitable
+    for i in range(30):
+        w.ingest(_make_sample(i, spl=40.0))
+    # Fill second window with same quiet SPL -> still suitable, but result must not be None
+    result = None
+    for i in range(30, 60):
+        result = w.ingest(_make_sample(i, spl=40.0))
+    assert result is not None
+    assert result["state"] == "suitable"
+    assert result["changed"] is False

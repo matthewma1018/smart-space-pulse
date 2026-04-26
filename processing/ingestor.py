@@ -134,14 +134,15 @@ class Ingestor:
             seq = payload.get("seq", "?")
             logger.info("Received telemetry from %s seq=%s", device_id, seq)
 
-            # Feed through windower for scoring
+            # Feed through windower for scoring; always persist current state to DB
             result = self._windower.ingest(payload)
             if result:
                 self._storage.update_state(
                     result["location_id"], result["state"], result["score"]
                 )
-                logger.info("STATE: %s -> %s (score=%.1f)",
-                            result["prev_state"], result["state"], result["score"])
+                if result["changed"]:
+                    logger.info("STATE: %s -> %s (score=%.1f)",
+                                result["prev_state"], result["state"], result["score"])
 
         elif msg_type == "state":
             errors = validate_state_change(payload)
