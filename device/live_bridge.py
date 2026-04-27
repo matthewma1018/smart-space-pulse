@@ -33,7 +33,7 @@ BAUD = 115200
 
 
 def connect_aws_mqtt():
-    """Connect to AWS IoT Core and return MQTT client."""
+    """Connect to AWS IoT Core and return MQTT client (or None on failure)."""
     host = os.getenv("MQTT_HOST")
     port = int(os.getenv("MQTT_PORT", "8883"))
     ca_path = os.getenv("MQTT_CA_CERT")
@@ -44,18 +44,42 @@ def connect_aws_mqtt():
         print("[WARN ] AWS MQTT not configured, skipping cloud publish")
         return None
 
-    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
-    ctx.load_verify_locations(ca_path)
-    ctx.load_cert_chain(cert_path, key_path)
+    try:
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+        ctx.load_verify_locations(ca_path)
+        ctx.load_cert_chain(cert_path, key_path)
 
-    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="Core2Kit-bridge")
-    client.tls_set_context(ctx)
-    client.tls_insecure_set(False)
-    client.connect(host, port, keepalive=60)
-    client.loop_start()
-    print(f"[INFO ] Connected to AWS IoT Core at {host}:{port}")
-    return client
+        client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="Core2Kit-bridge")
+        client.tls_set_context(ctx)
+        client.tls_insecure_set(False)
+        client.connect(host, port, keepalive=60)
+        client.loop_start()
+        print(f"[INFO ] Connected to AWS IoT Core at {host}:{port}")
+        return client
+    except Exception as e:
+        print(f"[WARN ] AWS IoT Core connect failed: {e} — cloud pipeline disabled")
+        return None
+
+
+def connect_local_mqtt():
+    """Connect to a local MQTT broker (the LSTM pipeline). Survives AWS outage.
+
+    Defaults to localhost:1883 — run a local Mosquitto (or equivalent) so the
+    bridge and ingestor both speak to it on the same machine.
+    """
+    host = os.getenv("LOCAL_MQTT_HOST", "localhost")
+    port = int(os.getenv("LOCAL_MQTT_PORT", "1883"))
+    try:
+        client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2,
+                             client_id="Core2Kit-bridge-local")
+        client.connect(host, port, keepalive=60)
+        client.loop_start()
+        print(f"[INFO ] Connected to local MQTT broker at {host}:{port}")
+        return client
+    except Exception as e:
+        print(f"[WARN ] Local MQTT connect failed: {e} — local pipeline disabled")
+        return None
 
 
 def find_core2_port():
@@ -161,7 +185,10 @@ def main():
 
     print(f"[INFO ] Core2 on {port}")
 
-    mqtt_client = connect_aws_mqtt()
+    aws_client   = connect_aws_mqtt()
+    local_client = connect_local_mqtt()
+    if not aws_client and not local_client:
+        print("[WARN ] No MQTT broker available — telemetry will only print to stdout")
 
     ser = serial.Serial(port, BAUD, timeout=2)  # shorter timeout so watchdog fires promptly
     time.sleep(0.5)
@@ -212,13 +239,17 @@ def main():
 
             count += 1
 
-            if mqtt_client:
-                location_id = msg.get("location_id", "library-1f")
-                topic = f"ssp/{location_id}/telemetry"
+            location_id = msg.get("location_id", "library-1f")
+            topic = f"ssp/{location_id}/telemetry"
+            payload = json.dumps(msg)
+
+            for name, client in (("AWS", aws_client), ("local", local_client)):
+                if client is None:
+                    continue
                 try:
-                    mqtt_client.publish(topic, json.dumps(msg), qos=1)
+                    client.publish(topic, payload, qos=1)
                 except Exception as e:
-                    print(f"  [WARN ] MQTT publish failed: {e}")
+                    print(f"  [WARN ] {name} MQTT publish failed: {e}")
 
             if count % 5 == 0:
                 print(f"  [{count}] SPL={msg['spl_db']:.1f} dB")
@@ -226,8 +257,12 @@ def main():
     except KeyboardInterrupt:
         print(f"\n[INFO ] Stopped. {count} readings processed.")
     finally:
-        if mqtt_client:
-            mqtt_client.disconnect()
+        for client in (aws_client, local_client):
+            if client is not None:
+                try:
+                    client.disconnect()
+                except Exception:
+                    pass
         ser.close()
 
 

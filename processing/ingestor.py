@@ -10,6 +10,8 @@ import os
 import re
 import ssl
 import sys
+import threading
+import time
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -86,11 +88,16 @@ class Ingestor:
     def __init__(self, host: str = "localhost", port: int = 1883,
                  use_tls: bool = False, ca_path: str = None,
                  cert_path: str = None, key_path: str = None,
-                 storage: Storage = None):
+                 storage: Storage = None,
+                 metrics_interval_sec: int = 60):
         self.host = host
         self.port = port
         self.messages_received_total = 0
         self.schema_validation_errors_total = 0
+        self._last_metrics_count = 0
+        self._last_metrics_ts = time.monotonic()
+        self._metrics_interval = metrics_interval_sec
+        self._metrics_stop = threading.Event()
         self._storage = storage or Storage()
         self._windower = Windower()
         self.client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2,
@@ -185,11 +192,30 @@ class Ingestor:
         except Exception:
             logger.exception("Unexpected error processing message on %s", msg.topic)
 
+    def _metrics_loop(self):
+        """Emit one INFO line every metrics_interval seconds: throughput +
+        cumulative error count. Runs in a daemon thread."""
+        while not self._metrics_stop.wait(self._metrics_interval):
+            now = time.monotonic()
+            elapsed = now - self._last_metrics_ts
+            delta = self.messages_received_total - self._last_metrics_count
+            rate = delta / elapsed if elapsed > 0 else 0.0
+            logger.info(
+                "METRICS msgs_total=%d msgs_last_%ds=%d rate_msgs_per_sec=%.2f "
+                "schema_errors_total=%d",
+                self.messages_received_total, int(elapsed), delta, rate,
+                self.schema_validation_errors_total,
+            )
+            self._last_metrics_count = self.messages_received_total
+            self._last_metrics_ts = now
+
     def start(self):
         self.client.on_connect = self.on_connect
         self.client.on_message = self.on_message
         self.client.connect(self.host, self.port, keepalive=60)
-        logger.info("Starting ingestor loop...")
+        threading.Thread(target=self._metrics_loop, daemon=True).start()
+        logger.info("Starting ingestor loop (metrics every %ds)...",
+                    self._metrics_interval)
         self.client.loop_forever()
 
 

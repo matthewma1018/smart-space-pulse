@@ -20,6 +20,7 @@ gives near-identical accuracy on this dataset for a fraction of the size.
 import json
 import logging
 import os
+import time
 from datetime import datetime, timezone
 from decimal import Decimal
 
@@ -161,6 +162,7 @@ def _write_state(location_id: str, state: str, score: float) -> None:
 
 
 def lambda_handler(event, context):
+    invoke_start = time.perf_counter()
     logger.info("Event: %s", json.dumps(event, default=str))
 
     err = _validate(event)
@@ -179,17 +181,22 @@ def lambda_handler(event, context):
         return {"status": "buffering", "samples": len(spl_samples)}
 
     method = "logistic"
+    score_start = time.perf_counter()
     score = _score_logistic(spl_samples)
     if score is None:
         method = "rule_based"
         score = _rule_based_score(_window_features(spl_samples))
+    score_ms = (time.perf_counter() - score_start) * 1000.0
 
     prev_state = _read_prev_state(location_id)
     new_state  = _apply_hysteresis(score, prev_state)
     _write_state(location_id, new_state, score)
 
-    logger.info("location=%s method=%s score=%.1f state=%s (prev=%s)",
-                location_id, method, score, new_state, prev_state)
+    total_ms = (time.perf_counter() - invoke_start) * 1000.0
+    logger.info("location=%s method=%s score=%.1f state=%s (prev=%s) "
+                "score_latency_ms=%.1f total_latency_ms=%.1f",
+                location_id, method, score, new_state, prev_state,
+                score_ms, total_ms)
 
     return {
         "status":      "ok",
