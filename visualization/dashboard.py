@@ -2,23 +2,30 @@
 Smart Space Pulse — Customer Dashboard
 """
 import os
-import sqlite3
 import sys
 import time
 from datetime import datetime, timezone
 
+import numpy as np
 import plotly.graph_objects as go
 import streamlit as st
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from processing.model.inference import score_from_samples, score_logistic_from_samples
+from cloud.dynamodb_storage import DynamoDBStorage
+from processing.model.inference import score_from_samples
+from processing.storage import Storage as LocalSqliteStorage
+from visualization.heatmap import (
+    REAL_LOCATION_ID,
+    build_score_grid,
+    quietest_cell,
+    render_heatmap_html,
+)
 
-DB_PATH = os.getenv("SQLITE_PATH", "data/ssp.db")
 REFRESH_INTERVAL = 3
 
 LOCATION_NAMES = {
-    "library-1f":     "Library · 1st Floor",
+    "library-1f":     "Internet Cafe · Lobby",
     "library-2f":     "Library · 2nd Floor",
     "study-room-3":   "Study Room 3",
     "working-2b":     "Workspace 2B",
@@ -161,46 +168,49 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-# ── DB helpers ────────────────────────────────────────────────────────────────
+# ── Storage helpers ───────────────────────────────────────────────────────────
+# Try the cloud (DynamoDB → carries logistic scores from the Lambda).
+# If AWS is unreachable, fall back to local SQLite written by
+# processing/ingestor.py — the LSTM half of the pipeline keeps working.
 
 @st.cache_resource
-def get_connection():
-    return sqlite3.connect(DB_PATH, check_same_thread=False)
+def get_storage():
+    try:
+        cloud = DynamoDBStorage()
+        cloud.list_states()  # one round-trip to verify creds + reachability
+        return cloud, True
+    except Exception as e:
+        print(f"[dashboard] DynamoDB unavailable ({e}) — using local SQLite fallback")
+        return LocalSqliteStorage(), False
 
 
-def load_current_states(conn):
-    rows = conn.execute(
-        "SELECT location_id, state, score, updated_at FROM location_state"
-    ).fetchall()
-    return [{"location_id": r[0], "state": r[1], "score": r[2], "updated_at": r[3]}
-            for r in rows]
+def load_current_states(storage):
+    return [
+        {
+            "location_id": it["location_id"],
+            "state":       it["state"],
+            "score":       float(it["score"]),
+            "updated_at":  it["updated_at"],
+        }
+        for it in storage.list_states()
+    ]
 
 
-def load_recent_telemetry(conn, location_id, limit=90):
-    rows = conn.execute(
-        "SELECT ts_utc, spl_db FROM raw_telemetry "
-        "WHERE location_id=? ORDER BY id DESC LIMIT ?",
-        (location_id, limit),
-    ).fetchall()
-    return [{"ts_utc": r[0], "spl_db": r[1]} for r in reversed(rows)]
+def load_recent_telemetry(storage, location_id, limit=90):
+    return storage.query_recent(location_id, n=limit)
 
 
-def load_last_30_spl(conn, location_id):
-    rows = conn.execute(
-        "SELECT spl_db FROM raw_telemetry WHERE location_id=? ORDER BY id DESC LIMIT 30",
-        (location_id,),
-    ).fetchall()
-    samples = [r[0] for r in reversed(rows)]
+def load_last_30_spl(storage, location_id):
+    items = storage.query_recent(location_id, n=30)
+    samples = [it["spl_db"] for it in items]
     return samples if len(samples) == 30 else None
 
 
-def load_latest_spl(conn, location_id):
-    row = conn.execute(
-        "SELECT spl_db, ts_utc FROM raw_telemetry "
-        "WHERE location_id=? ORDER BY id DESC LIMIT 1",
-        (location_id,),
-    ).fetchone()
-    return (row[0], row[1]) if row else (None, None)
+def load_latest_spl(storage, location_id):
+    items = storage.query_recent(location_id, n=1)
+    if not items:
+        return None, None
+    return items[-1]["spl_db"], items[-1]["ts_utc"]
 
 
 # ── Widget helpers ────────────────────────────────────────────────────────────
@@ -323,7 +333,7 @@ def make_noise_chart(data):
 
 # ── App ───────────────────────────────────────────────────────────────────────
 
-conn = get_connection()
+storage, cloud_up = get_storage()
 
 hdr_l, hdr_r = st.columns([3, 1])
 with hdr_l:
@@ -342,86 +352,130 @@ with hdr_r:
 
 st.markdown("<div style='height:0.6rem'></div>", unsafe_allow_html=True)
 
-states = load_current_states(conn)
-
-if not states:
+if not cloud_up:
     st.markdown(
-        '<div class="busy-banner">Sensors are warming up — data will appear shortly.</div>',
+        '<div style="background:#fffbeb;border:1.5px solid #fcd34d;border-radius:10px;'
+        'padding:8px 14px;margin-bottom:0.8rem;font-size:0.82rem;color:#92400e;">'
+        '☁️ Cloud unreachable — running on local SQLite. '
+        'LSTM is live; logistic scores will show N/A until AWS is back.'
+        '</div>',
         unsafe_allow_html=True,
     )
-else:
-    # Recommendation banner
-    quiet_spots = [s for s in states if s["state"] == "suitable"]
-    if quiet_spots:
-        best = max(quiet_spots, key=lambda s: s["score"])
+
+states = load_current_states(storage)
+
+tab_spaces, tab_heatmap = st.tabs(["Spaces", "Heatmap"])
+
+with tab_spaces:
+    if not states:
         st.markdown(
-            f'<div class="rec-banner">'
-            f'  <div class="rec-icon">✨</div>'
-            f'  <div>'
-            f'    <p class="rec-eyebrow">Best spot right now</p>'
-            f'    <p class="rec-name">{friendly(best["location_id"])}</p>'
-            f'  </div>'
-            f'</div>',
+            '<div class="busy-banner">Sensors are warming up — data will appear shortly.</div>',
             unsafe_allow_html=True,
         )
     else:
-        st.markdown(
-            '<div class="busy-banner">'
-            '<strong>All spaces are currently busy.</strong> '
-            'Conditions change quickly — check back in a few minutes.'
-            '</div>',
-            unsafe_allow_html=True,
-        )
-
-    st.markdown('<p class="section-label">All spaces</p>', unsafe_allow_html=True)
-
-    cols = st.columns(2)
-    for i, s in enumerate(states):
-        spl_val, _ = load_latest_spl(conn, s["location_id"])
-        card_cls, status_txt, status_cls = card_attrs(s["state"])
-        upd      = time_ago(s["updated_at"])
-        spl_text = f"{spl_val:.1f} dB" if spl_val is not None else "—"
-        bar      = noise_bar(spl_val) if spl_val is not None else ""
-        noise_label = (
-            "Low noise"      if spl_val is not None and spl_val < 55 else
-            "Moderate noise" if spl_val is not None and spl_val < 70 else
-            "High noise"     if spl_val is not None else ""
-        )
-
-        spl_30 = load_last_30_spl(conn, s["location_id"])
-        if spl_30:
-            lstm_score     = score_from_samples(spl_30)
-            logistic_score = score_logistic_from_samples(spl_30)
-        else:
-            lstm_score = logistic_score = None
-        compare = model_compare_html(lstm_score, logistic_score)
-
-        with cols[i % 2]:
+        # Recommendation banner
+        quiet_spots = [s for s in states if s["state"] == "suitable"]
+        if quiet_spots:
+            best = max(quiet_spots, key=lambda s: s["score"])
             st.markdown(
-                f'<div class="space-card {card_cls}">'
-                f'  <p class="card-location">{friendly(s["location_id"])}</p>'
-                f'  <p class="card-status {status_cls}">{status_txt}</p>'
-                f'  {bar}'
-                f'  <p class="card-meta">{noise_label} · {spl_text} · {upd}</p>'
-                f'  {compare}'
+                f'<div class="rec-banner">'
+                f'  <div class="rec-icon">✨</div>'
+                f'  <div>'
+                f'    <p class="rec-eyebrow">Best spot right now</p>'
+                f'    <p class="rec-name">{friendly(best["location_id"])}</p>'
+                f'  </div>'
                 f'</div>',
                 unsafe_allow_html=True,
             )
+        else:
+            st.markdown(
+                '<div class="busy-banner">'
+                '<strong>All spaces are currently busy.</strong> '
+                'Conditions change quickly — check back in a few minutes.'
+                '</div>',
+                unsafe_allow_html=True,
+            )
 
-    st.markdown("<div style='height:0.3rem'></div>", unsafe_allow_html=True)
-    st.markdown('<p class="section-label">Noise over time</p>', unsafe_allow_html=True)
+        st.markdown('<p class="section-label">All spaces</p>', unsafe_allow_html=True)
 
-    location_ids   = [s["location_id"] for s in states]
-    friendly_names = [friendly(lid) for lid in location_ids]
-    sel_idx = st.selectbox(
-        "Space",
-        range(len(location_ids)),
-        format_func=lambda i: friendly_names[i],
-        key="live_sel",
-        label_visibility="collapsed",
+        cols = st.columns(2)
+        for i, s in enumerate(states):
+            spl_val, _ = load_latest_spl(storage, s["location_id"])
+            card_cls, status_txt, status_cls = card_attrs(s["state"])
+            upd      = time_ago(s["updated_at"])
+            spl_text = f"{spl_val:.1f} dB" if spl_val is not None else "—"
+            bar      = noise_bar(spl_val) if spl_val is not None else ""
+            noise_label = (
+                "Low noise"      if spl_val is not None and spl_val < 55 else
+                "Moderate noise" if spl_val is not None and spl_val < 70 else
+                "High noise"     if spl_val is not None else ""
+            )
+
+            # Logistic score comes from the cloud Lambda (already in ssp-state).
+            # When AWS is down we're reading from local SQLite, where the
+            # `score` column was written by the LSTM windower — not a logistic
+            # value, so we suppress it rather than mislabel it.
+            spl_30         = load_last_30_spl(storage, s["location_id"])
+            lstm_score     = score_from_samples(spl_30) if spl_30 else None
+            logistic_score = s["score"] if cloud_up else None
+            compare        = model_compare_html(lstm_score, logistic_score)
+
+            with cols[i % 2]:
+                st.markdown(
+                    f'<div class="space-card {card_cls}">'
+                    f'  <p class="card-location">{friendly(s["location_id"])}</p>'
+                    f'  <p class="card-status {status_cls}">{status_txt}</p>'
+                    f'  {bar}'
+                    f'  <p class="card-meta">{noise_label} · {spl_text} · {upd}</p>'
+                    f'  {compare}'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
+        st.markdown("<div style='height:0.3rem'></div>", unsafe_allow_html=True)
+        st.markdown('<p class="section-label">Noise over time</p>', unsafe_allow_html=True)
+
+        location_ids   = [s["location_id"] for s in states]
+        friendly_names = [friendly(lid) for lid in location_ids]
+        sel_idx = st.selectbox(
+            "Space",
+            range(len(location_ids)),
+            format_func=lambda i: friendly_names[i],
+            key="live_sel",
+            label_visibility="collapsed",
+        )
+        recent = load_recent_telemetry(storage, location_ids[sel_idx], limit=30)
+        st.plotly_chart(make_noise_chart(recent), use_container_width=True)
+
+with tab_heatmap:
+    st.markdown(
+        '<p class="section-label">Internet Cafe · live noise heatmap</p>',
+        unsafe_allow_html=True,
     )
-    recent = load_recent_telemetry(conn, location_ids[sel_idx], limit=90)
-    st.plotly_chart(make_noise_chart(recent), use_container_width=True)
+    st.caption(
+        "Real Core2 device sits at the ★ corner (row 0, col 0). "
+        "The other 24 cells are simulated and spatially coupled to the real "
+        "device — a spike at ★ propagates outward with distance-based decay. "
+        "All 25 cells are scored with the **LSTM** (local PyTorch inference); "
+        "the cloud Lambda's logistic score is shown only on the Spaces tab."
+    )
+
+    real_30 = load_last_30_spl(storage, REAL_LOCATION_ID)
+    rng = np.random.default_rng()
+    scores = build_score_grid(real_30, rng, score_from_samples)
+    r_q, c_q, s_q = quietest_cell(scores)
+
+    st.markdown(
+        f'<div class="rec-banner">'
+        f'  <div class="rec-icon">📍</div>'
+        f'  <div>'
+        f'    <p class="rec-eyebrow">Quietest spot right now</p>'
+        f'    <p class="rec-name">Row {r_q}, Col {c_q} · score {int(round(s_q))}</p>'
+        f'  </div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(render_heatmap_html(scores), unsafe_allow_html=True)
 
 time.sleep(REFRESH_INTERVAL)
 st.rerun()

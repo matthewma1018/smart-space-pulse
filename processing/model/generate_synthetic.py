@@ -6,8 +6,8 @@ each recorded window as a seed and resynthesising perturbed copies under a
 target acoustic profile (quiet ambient or loud event).
 
 Output: data_samples/synthetic/
-    syn_suit_NNN_sensor_log.jsonl      (250 windows, quiet profile)
-    syn_notsuit_NNN_sensor_log.jsonl   (290 windows, loud profile)
+    syn_suit_NNN_sensor_log.jsonl      (300 windows, quiet profile)
+    syn_notsuit_NNN_sensor_log.jsonl   (330 windows, loud profile)
 
 Usage:
     python -m processing.model.generate_synthetic
@@ -119,17 +119,17 @@ def generate(output_root: str, seed: int) -> None:
             "Populate data_samples/recorded/ with labelled JSONL windows first."
         )
 
-    for i in range(250):
+    for i in range(300):
         spl  = make_quiet_window(random.choice(seeds))
         path = os.path.join(synthetic_dir, f"syn_suit_{i:03d}_sensor_log.jsonl")
         write_window_jsonl(path, spl, "core2-device2", "library", random_start_ts())
 
-    for i in range(290):
+    for i in range(330):
         spl  = make_loud_window(random.choice(seeds))
         path = os.path.join(synthetic_dir, f"syn_notsuit_{i:03d}_sensor_log.jsonl")
         write_window_jsonl(path, spl, "core2-device2", "library", random_start_ts())
 
-    logger.info("Wrote 250 suitable + 290 not-suitable to %s", synthetic_dir)
+    logger.info("Wrote 300 suitable + 330 not-suitable to %s", synthetic_dir)
 
 
 def parse_args():

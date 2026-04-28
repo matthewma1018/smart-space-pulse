@@ -13,7 +13,7 @@ logger = logging.getLogger("storage")
 
 def _init_sqlite(db_path: str):
     """Initialize SQLite tables."""
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, check_same_thread=False)
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS raw_telemetry (
             id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -63,6 +63,30 @@ class Storage:
             (location_id, state, score, now),
         )
         self._conn.commit()
+
+    # ---- reads (matches the DynamoDBStorage interface so the dashboard
+    #            can drop us in as a fallback when AWS is unreachable) -----
+
+    def query_recent(self, location_id: str, n: int = 30) -> list[dict]:
+        """Return the n most recent telemetry items, oldest first."""
+        rows = self._conn.execute(
+            "SELECT ts_utc, spl_db FROM raw_telemetry "
+            "WHERE location_id = ? ORDER BY id DESC LIMIT ?",
+            (location_id, n),
+        ).fetchall()
+        return [{"ts_utc": r[0], "spl_db": float(r[1])} for r in reversed(rows)]
+
+    def query_recent_spl(self, location_id: str, n: int = 30) -> list[float]:
+        return [it["spl_db"] for it in self.query_recent(location_id, n)]
+
+    def list_states(self) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT location_id, state, score, updated_at FROM location_state"
+        ).fetchall()
+        return [
+            {"location_id": r[0], "state": r[1], "score": float(r[2]), "updated_at": r[3]}
+            for r in rows
+        ]
 
     def close(self):
         """Close the database connection."""
