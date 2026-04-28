@@ -1,5 +1,7 @@
 # Smart Space Pulse
 
+**Team:** Yu Ma, Wendy Wang
+
 Real-time occupancy monitoring for shared spaces (libraries, lounges, cafés) using
 M5Stack Core2 edge devices, AWS IoT Core, serverless Lambda inference, DynamoDB,
 **and** a fully local backup pipeline. Two parallel ML scorers (LSTM + Logistic
@@ -56,7 +58,7 @@ cp .env.example .env
 # edit MQTT_HOST, AWS_REGION, cert paths, etc.
 ```
 
-For AWS IoT certs and IAM, see **[docs/CERTS.md](docs/CERTS.md)** — covers download,
+For AWS IoT certs and IAM, see **[config/CERTS.md](config/CERTS.md)** — covers download,
 install, rotation, and the AWS Academy session-token expiry gotcha.
 
 ## One-time cloud setup (skip if running local-only)
@@ -171,7 +173,7 @@ on first start while the device boots, then stays clean.
 
 **Bridge says `[WARN ] AWS IoT Core connect failed: ...`**
 TLS or DNS issue. Run the local pipeline only — bridge keeps publishing to
-localhost. Common cause: stale or wrong certificates. See docs/CERTS.md.
+localhost. Common cause: stale or wrong certificates. See config/CERTS.md.
 
 **Dashboard shows yellow `☁️ Cloud unreachable` banner**
 DynamoDB probe failed. Most common cause: AWS Academy session token expired
@@ -223,7 +225,7 @@ Mosquitto not running. Windows: `net start mosquitto`. Linux:
 | `visualization/heatmap.py` | 5×5 simulated occupancy heatmap |
 | `messaging/schema.md` | MQTT topic + payload contracts |
 | `config/iam_policy_sample.json` | Redacted IAM policy reference |
-| `docs/CERTS.md` | AWS IoT cert download / install / rotation |
+| `config/CERTS.md` | AWS IoT cert download / install / rotation |
 | `data_samples/` | Recorded + synthetic labeled windows (see its README for units) |
 | `observability/replay.py` | Replay JSONL through the pipeline |
 | `tests/` | Pytest suite (27 tests) |
