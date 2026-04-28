@@ -44,10 +44,10 @@ belongs to that class.
 | Source | suit | notsuit | total |
 |--------|------|---------|-------|
 | recorded (`rec_*`) | 50 | 20 | 70 |
-| synthetic (`syn_*`) | 250 | 290 | 540 |
-| **combined** | 300 | 310 | **610** |
+| synthetic (`syn_*`) | 300 | 330 | 630 |
+| **combined** | 350 | 350 | **700** |
 
-Approximately balanced once recorded and synthetic are pooled.
+Exactly balanced once recorded and synthetic are pooled.
 
 ## Loading
 

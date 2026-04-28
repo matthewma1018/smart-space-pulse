@@ -70,7 +70,10 @@ python -m cloud.setup_iot_rule     # wire IoT Topic Rule → Lambda
 
 ## Run
 
-Mosquitto runs as a service on Windows after install (auto-starts with the OS).
+**Prerequisite:** Mosquitto must be listening on `localhost:1883` before
+starting the bridge, the ingestor, or the dashboard's SQLite-fallback path.
+The Windows installer auto-starts it as a service; on Linux/macOS you may
+need `sudo systemctl start mosquitto` or `brew services start mosquitto`.
 Verify it's listening:
 
 ```bash
@@ -127,7 +130,7 @@ hold the previous state. This prevents flicker around the boundary.
 ### LSTM (local)
 - 1-layer LSTM, hidden size 32, sigmoid output → P(suitable)
 - Input: `(30, 5)` per-timestep rolling features (sub-window size 8)
-- BCELoss; 100% validation accuracy on synthetic dataset
+- BCELoss; ~99% validation accuracy on the 700-window dataset (10 epochs)
 - Weights: `processing/model/lstm_weights.pt`
 - Runs in the dashboard process (PyTorch is too large for a Lambda zip)
 
@@ -143,8 +146,8 @@ Both scores are shown side-by-side on every space card with an agreement badge.
 ## Training
 
 ```bash
-python -m processing.model.generate_synthetic   # 600 labeled windows total
-python -m processing.model.train --epochs 50 --lr 0.001
+python -m processing.model.generate_synthetic   # 700 labeled windows total (350 suit + 350 not-suit)
+python -m processing.model.train --epochs 10 --lr 0.002
 python -m processing.model.train_logistic       # prints comparison table
 ```
 
