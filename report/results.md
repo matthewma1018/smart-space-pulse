@@ -79,7 +79,7 @@ explicit absorbing mechanism:
 | Malformed payload            | Schema validation at ingestor and Lambda              | 8 schema tests in `tests/test_mqtt_schema.py` (all pass)                 |
 | State flicker                | 55/65 hysteresis band                                 | provable by construction; 5 tests in `tests/test_windower.py`            |
 
-## 5. Discussion: LSTM vs logistic vs rule-based
+## 5. Discussion: LSTM vs logistic
 
 Logistic and LSTM perform within ~1% of each other on this dataset because
 the suitability boundary is dominated by `spl_mean` and `spl_p90`, both
@@ -88,9 +88,7 @@ capacity than the problem requires; its only advantage on this dataset is a
 slightly smoother probability curve, which is invisible after thresholding.
 Logistic was kept in cloud because it fits in a Lambda zip and serves at
 sub-50 ms warm latency; LSTM was kept locally because PyTorch (~250 MB) does
-not fit. A rule-based scorer remains as a fallback in both Lambda and the
-local pipeline so the system continues to label states even if both models
-fail to load.
+not fit.
 
 ## 6. Limitations
 
