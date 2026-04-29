@@ -1,9 +1,0 @@
-{
-  "device_id": "Core2Kit",
-  "location_id": "library-1f",
-  "ts_utc": "2026-04-17T14:23:30.000Z",
-  "score": 67,
-  "state": "suitable",
-  "prev_state": "not_suitable",
-  "window_sec": 30
-}

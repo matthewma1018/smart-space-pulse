@@ -119,6 +119,18 @@ STREAMING_CODE = """\
 import M5
 from M5 import *
 import math,struct,time,ujson
+try:
+    import network
+    _wlan=network.WLAN(network.STA_IF)
+except Exception:
+    _wlan=None
+def _rssi():
+    try:
+        if _wlan is None or not _wlan.isconnected():
+            return 0
+        return int(_wlan.status('rssi'))
+    except Exception:
+        return 0
 M5.begin()
 Widgets.fillScreen(0x222222)
 Widgets.Label("Smart Space Pulse",10,8,1.0,0xffffff,0x222222,Widgets.FONTS.DejaVu18)
@@ -137,13 +149,15 @@ def compute_spl():
         return 0.0
     return max(0.0,min(120.0,20.0*math.log10(rms/32768.0)+94.0))
 seq=0
+boot_ms=time.ticks_ms()
+last_hb=boot_ms
 while True:
     M5.update()
     t0=time.ticks_ms()
     spl=round(compute_spl(),2)
     t=time.localtime()
     ts='{}-{:02d}-{:02d}T{:02d}:{:02d}:{:02d}.000Z'.format(t[0],t[1],t[2],t[3],t[4],t[5])
-    line=ujson.dumps({'device_id':'Core2Kit','location_id':'library-1f','ts_utc':ts,'spl_db':spl,'seq':seq})
+    line=ujson.dumps({'type':'telemetry','device_id':'Core2Kit','location_id':'library-1f','ts_utc':ts,'spl_db':spl,'seq':seq})
     print(line)
     lbl_spl.setText('SPL: {:.1f} dB'.format(spl))
     if spl<55:
@@ -156,6 +170,10 @@ while True:
         lbl_lvl.setColor(0xe74c3c,0x222222)
         lbl_lvl.setText('Loud')
     seq+=1
+    if time.ticks_diff(t0,last_hb)>=30000:
+        hb=ujson.dumps({'type':'heartbeat','device_id':'Core2Kit','location_id':'library-1f','ts_utc':ts,'uptime_sec':time.ticks_diff(t0,boot_ms)//1000,'rssi_dbm':_rssi()})
+        print(hb)
+        last_hb=t0
     el=time.ticks_diff(time.ticks_ms(),t0)
     if el<1000:
         time.sleep_ms(1000-el)
@@ -229,7 +247,8 @@ def main():
             except json.JSONDecodeError:
                 continue
 
-            if "spl_db" not in msg:
+            msg_type = msg.get("type", "telemetry" if "spl_db" in msg else None)
+            if msg_type is None:
                 continue
 
             last_reading = time.time()
@@ -237,21 +256,30 @@ def main():
             # Overwrite device timestamp with host UTC (Core2 RTC is unsynchronized)
             msg["ts_utc"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
-            count += 1
-
             location_id = msg.get("location_id", "library-1f")
-            topic = f"ssp/{location_id}/telemetry"
+
+            # Drop the routing-only `type` field before publishing — it's not part of the schema
+            msg.pop("type", None)
             payload = json.dumps(msg)
+
+            if msg_type == "heartbeat":
+                topic = f"ssp/{location_id}/heartbeat"
+                qos = 0
+                print(f"  [HB ] uptime={msg.get('uptime_sec','?')}s rssi={msg.get('rssi_dbm','?')}dBm")
+            else:
+                topic = f"ssp/{location_id}/telemetry"
+                qos = 1
+                count += 1
 
             for name, client in (("AWS", aws_client), ("local", local_client)):
                 if client is None:
                     continue
                 try:
-                    client.publish(topic, payload, qos=1)
+                    client.publish(topic, payload, qos=qos)
                 except Exception as e:
                     print(f"  [WARN ] {name} MQTT publish failed: {e}")
 
-            if count % 5 == 0:
+            if msg_type == "telemetry" and count % 5 == 0:
                 print(f"  [{count}] SPL={msg['spl_db']:.1f} dB")
 
     except KeyboardInterrupt:

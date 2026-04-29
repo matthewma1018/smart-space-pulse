@@ -27,7 +27,6 @@ logger = logging.getLogger("ingestor")
 
 DEVICE_ID_PATTERN = re.compile(r"^Core2Kit[a-zA-Z0-9-]*$")
 ISO8601_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$")
-VALID_STATES = {"suitable", "not_suitable", "transitioning"}
 
 TELEMETRY_REQUIRED = ["device_id", "location_id", "ts_utc", "spl_db", "seq"]
 TELEMETRY_NUMERIC = ["spl_db"]
@@ -55,21 +54,6 @@ def validate_telemetry(payload: dict) -> list[str]:
     if "seq" in payload and not isinstance(payload.get("seq"), int):
         errors.append("seq must be integer")
 
-    return errors
-
-
-def validate_state_change(payload: dict) -> list[str]:
-    """Validate a state-change payload. Returns list of error strings."""
-    errors = []
-    if "state" in payload and payload["state"] not in VALID_STATES:
-        errors.append(f"invalid state: {payload['state']}")
-    if "prev_state" in payload and payload["prev_state"] not in VALID_STATES:
-        errors.append(f"invalid prev_state: {payload['prev_state']}")
-    if "score" in payload:
-        if not isinstance(payload["score"], (int, float)):
-            errors.append("score must be numeric")
-        elif not (0 <= payload["score"] <= 100):
-            errors.append(f"score out of range: {payload['score']}")
     return errors
 
 
@@ -151,28 +135,11 @@ class Ingestor:
                     logger.info("STATE: %s -> %s (score=%.1f)",
                                 result["prev_state"], result["state"], result["score"])
 
-        elif msg_type == "state":
-            errors = validate_state_change(payload)
-            if errors:
-                self.schema_validation_errors_total += 1
-                logger.error("State schema error: %s", "; ".join(errors))
-                return
-            self._storage.update_state(
-                payload["location_id"], payload["state"], payload["score"]
-            )
-            logger.info("State update: %s -> %s (score=%.1f)",
-                        payload["location_id"], payload["state"], payload["score"])
-
-        elif msg_type == "alert":
-            logger.info("Alert from %s: %s spl_db=%.1f",
-                        payload.get("device_id", "?"),
-                        payload.get("alert_type", "?"),
-                        payload.get("spl_db", 0.0))
-
         elif msg_type == "heartbeat":
-            logger.debug("Heartbeat from %s uptime=%s",
+            logger.debug("Heartbeat from %s uptime=%s rssi=%s dBm",
                          payload.get("device_id", "?"),
-                         payload.get("uptime_sec", "?"))
+                         payload.get("uptime_sec", "?"),
+                         payload.get("rssi_dbm", "?"))
 
     def on_message(self, client, userdata, msg):
         self.messages_received_total += 1

@@ -161,7 +161,7 @@ python -m cloud.build_lambda && python -m cloud.deploy_lambda
 ## Other commands
 
 ```bash
-pytest tests/ -v --tb=short                                          # 27 tests
+pytest tests/ -v --tb=short                                          # 24 tests
 python observability/replay.py --file <jsonl> --dry-run              # offline replay
 ```
 
@@ -207,11 +207,8 @@ Mosquitto not running. Windows: `net start mosquitto`. Linux:
 
 | Path | Purpose |
 |------|---------|
-| `device/live_bridge.py` | Serial reader → publishes to AWS + local MQTT in parallel; 12 s watchdog |
-| `device/main_hw.py` | Core2 firmware (MicroPython, UIFlow2) |
-| `device/feature_extractor.py` | SPL computation + windowing |
-| `device/edge_policy.py` | On-device threshold rules |
-| `device/display.py` | LCD/LED/buzzer helpers |
+| `device/live_bridge.py` | Serial reader → publishes telemetry + 30 s heartbeat to AWS + local MQTT in parallel; 12 s watchdog |
+| `device/main_hw.py` | Core2 firmware (MicroPython, UIFlow2); telemetry + heartbeat publish |
 | `cloud/lambda_handler.py` | Lambda: validate → write → score → hysteresis → state |
 | `cloud/dynamodb_storage.py` | boto3 DynamoDB storage |
 | `cloud/build_lambda.py` / `deploy_lambda.py` | Lambda packaging + deploy |
@@ -223,9 +220,10 @@ Mosquitto not running. Windows: `net start mosquitto`. Linux:
 | `processing/model/train{,_logistic}.py` | Training |
 | `visualization/dashboard.py` | SpacePulse Streamlit UI; DynamoDB → SQLite fallback |
 | `visualization/heatmap.py` | 5×5 simulated occupancy heatmap |
-| `messaging/schema.md` | MQTT topic + payload contracts |
+| `messaging/schema.md` | MQTT topic + payload contracts (`telemetry` + `heartbeat`) |
+| `messaging/examples/` | `telemetry_sample.json`, `heartbeat_sample.json` |
 | `config/iam_policy_sample.json` | Redacted IAM policy reference |
 | `config/CERTS.md` | AWS IoT cert download / install / rotation |
 | `data_samples/` | Recorded + synthetic labeled windows (see its README for units) |
 | `observability/replay.py` | Replay JSONL through the pipeline |
-| `tests/` | Pytest suite (27 tests) |
+| `tests/` | Pytest suite (24 tests) |

@@ -2,7 +2,6 @@
   "device_id": "Core2Kit",
   "location_id": "library-1f",
   "ts_utc": "2026-04-17T14:25:00.000Z",
-  "alert_type": "noise_spike",
-  "spl_db": 88.2,
-  "threshold_db": 75.0
+  "uptime_sec": 3600,
+  "rssi_dbm": -58
 }

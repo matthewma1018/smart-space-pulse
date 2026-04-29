@@ -46,14 +46,16 @@ LOUD_THRESHOLD_DB = 75.0
 
 # MQTT topics
 TOPIC_TELEMETRY = "ssp/{}/telemetry".format(LOCATION_ID)
-TOPIC_ALERT     = "ssp/{}/alert".format(LOCATION_ID)
 TOPIC_HEARTBEAT = "ssp/{}/heartbeat".format(LOCATION_ID)
 
-PUBLISH_INTERVAL_MS = 1000
+PUBLISH_INTERVAL_MS   = 1000
+HEARTBEAT_INTERVAL_MS = 30000
 
 # ── Globals ───────────────────────────────────────────────────────────────────
 mqtt_client = None
 last_pub    = 0
+last_hb     = 0
+boot_ticks  = 0
 seq         = 0
 
 lbl_title = None
@@ -113,6 +115,17 @@ def edge_classify(spl_db):
         return "busy"
     return "quiet"
 
+# ── WiFi Diagnostics ─────────────────────────────────────────────────────────
+def read_rssi():
+    """Return WiFi RSSI in dBm, or 0 if unavailable."""
+    try:
+        wlan = network.WLAN(network.STA_IF)
+        if not wlan.isconnected():
+            return 0
+        return int(wlan.status('rssi'))
+    except Exception:
+        return 0
+
 # ── Display Helpers ──────────────────────────────────────────────────────────
 def color_for_state(state):
     if state == "busy":
@@ -138,7 +151,10 @@ def setup():
 
 # ── Main Loop ────────────────────────────────────────────────────────────────
 def loop():
-    global mqtt_client, last_pub, seq
+    global mqtt_client, last_pub, last_hb, boot_ticks, seq
+
+    if boot_ticks == 0:
+        boot_ticks = time.ticks_ms()
 
     M5.update()
 
@@ -178,24 +194,30 @@ def loop():
             print("[ERROR] MQTT publish failed:", e)
             mqtt_client = None
 
-        # Publish alert if noise spike
-        if spl_db > LOUD_THRESHOLD_DB:
-            alert = ujson.dumps({
-                "device_id":    DEVICE_ID,
-                "location_id":  LOCATION_ID,
-                "ts_utc":       ts_utc,
-                "alert_type":   "noise_spike",
-                "spl_db":       spl_db,
-                "threshold_db": LOUD_THRESHOLD_DB,
-            })
-            try:
-                if mqtt_client:
-                    mqtt_client.publish(TOPIC_ALERT, alert.encode())
-            except Exception:
-                mqtt_client = None
-
         last_pub = now
         seq += 1
+
+    # Publish heartbeat every 30 s (QoS 0, fire-and-forget)
+    if time.ticks_diff(now, last_hb) >= HEARTBEAT_INTERVAL_MS:
+        t = time.localtime()
+        ts_utc = "{}-{:02d}-{:02d}T{:02d}:{:02d}:{:02d}.000Z".format(t[0], t[1], t[2], t[3], t[4], t[5])
+        uptime_sec = time.ticks_diff(now, boot_ticks) // 1000
+        hb_payload = ujson.dumps({
+            "device_id":   DEVICE_ID,
+            "location_id": LOCATION_ID,
+            "ts_utc":      ts_utc,
+            "uptime_sec":  uptime_sec,
+            "rssi_dbm":    read_rssi(),
+        })
+        try:
+            if mqtt_client is None:
+                mqtt_client = mqtt_connect()
+            mqtt_client.publish(TOPIC_HEARTBEAT, hb_payload.encode())
+            print("[{}] {} | {}".format(ts_utc, TOPIC_HEARTBEAT, hb_payload))
+        except Exception as e:
+            print("[ERROR] heartbeat publish failed:", e)
+            mqtt_client = None
+        last_hb = now
 
 # ── Entry Point ──────────────────────────────────────────────────────────────
 if __name__ == "__main__":

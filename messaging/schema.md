@@ -6,10 +6,12 @@
 ssp/                              # Smart Space Pulse root
   {location_id}/                  # e.g. "library-1f", "lounge-jfk-b"
     telemetry                     # 1 Hz sensor summaries  (QoS 1, retain=false)
-    state                         # occupancy state changes (QoS 1, retain=true)
-    alert                         # threshold breach alerts (QoS 1, retain=false)
     heartbeat                     # device liveness ping    (QoS 0, retain=false)
 ```
+
+State transitions are not published as MQTT messages in the final version;
+they are written directly to DynamoDB by the inference Lambda and to SQLite
+by `processing/windower.py`. The dashboard reads state from those stores.
 
 ## Telemetry Payload (`ssp/{location_id}/telemetry`)
 
@@ -17,7 +19,7 @@ Published every 1 second. QoS 1, retain=false.
 
 ```json
 {
-  "device_id":   "core2-a1b2",
+  "device_id":   "Core2Kit",
   "location_id": "library-1f",
   "ts_utc":      "2026-04-17T14:23:01.000Z",
   "spl_db":      61.4,
@@ -33,53 +35,21 @@ Published every 1 second. QoS 1, retain=false.
 | spl_db | float | Non-null, ≥ 0 |
 | seq | integer | Non-null, monotonic per device |
 
-## State-Change Payload (`ssp/{location_id}/state`)
-
-Published on state transitions only. QoS 1, retain=true.
-
-```json
-{
-  "device_id":   "core2-a1b2",
-  "location_id": "library-1f",
-  "ts_utc":      "2026-04-17T14:23:30.000Z",
-  "score":       67,
-  "state":       "suitable",
-  "prev_state":  "not_suitable",
-  "window_sec":  30
-}
-```
-
-| Field | Type | Constraints |
-|-------|------|-------------|
-| state | string | One of: `suitable`, `not_suitable`, `transitioning` |
-| score | float | 0–100 |
-| prev_state | string | One of: `suitable`, `not_suitable`, `transitioning` |
-| window_sec | integer | Window size in seconds |
-
-## Alert Payload (`ssp/{location_id}/alert`)
-
-Published on threshold breaches. QoS 1, retain=false.
-
-```json
-{
-  "device_id":    "core2-a1b2",
-  "location_id":  "library-1f",
-  "ts_utc":       "2026-04-17T14:25:00.000Z",
-  "alert_type":   "noise_spike",
-  "spl_db":       88.2,
-  "threshold_db": 75.0
-}
-```
-
 ## Heartbeat Payload (`ssp/{location_id}/heartbeat`)
 
 Published every 30 seconds. QoS 0, retain=false.
 
 ```json
 {
-  "device_id":   "core2-a1b2",
+  "device_id":   "Core2Kit",
   "location_id": "library-1f",
   "ts_utc":      "2026-04-17T14:25:00.000Z",
-  "uptime_sec":  3600
+  "uptime_sec":  3600,
+  "rssi_dbm":    -58
 }
 ```
+
+| Field | Type | Constraints |
+|-------|------|-------------|
+| uptime_sec | integer | Seconds since device boot, ≥ 0 |
+| rssi_dbm | integer | WiFi RSSI in dBm; typical range -30 (excellent) to -90 (marginal). `0` if unavailable. |

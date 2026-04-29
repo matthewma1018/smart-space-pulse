@@ -1,6 +1,6 @@
 """
 Tests for MQTT message schema validation.
-Validates telemetry, state-change, and alert payloads against spec.
+Validates telemetry payloads against spec.
 """
 import re
 import sys
@@ -9,7 +9,6 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 DEVICE_ID_PATTERN = re.compile(r"^Core2Kit[a-zA-Z0-9-]*$")
-VALID_STATES = {"suitable", "not_suitable", "transitioning"}
 ISO8601_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$")
 
 
@@ -36,25 +35,6 @@ def validate_telemetry(payload: dict) -> list[str]:
 
     if "seq" in payload and not isinstance(payload["seq"], int):
         errors.append("seq must be integer")
-
-    return errors
-
-
-def validate_state(payload: dict) -> list[str]:
-    """Validate a state-change payload."""
-    errors = []
-
-    if "state" in payload and payload["state"] not in VALID_STATES:
-        errors.append(f"invalid state: {payload['state']}")
-
-    if "prev_state" in payload and payload["prev_state"] not in VALID_STATES:
-        errors.append(f"invalid prev_state: {payload['prev_state']}")
-
-    if "score" in payload:
-        if not isinstance(payload["score"], (int, float)):
-            errors.append("score must be numeric")
-        elif not (0 <= payload["score"] <= 100):
-            errors.append(f"score out of range: {payload['score']}")
 
     return errors
 
@@ -119,39 +99,3 @@ def test_telemetry_bad_timestamp():
     }
     errors = validate_telemetry(payload)
     assert any("ts_utc" in e for e in errors)
-
-
-# --- State-change tests ---
-
-def test_valid_state_change():
-    payload = {
-        "device_id": "Core2Kit",
-        "location_id": "library-1f",
-        "ts_utc": "2026-04-17T14:23:30.000Z",
-        "score": 67,
-        "state": "suitable",
-        "prev_state": "not_suitable",
-        "window_sec": 30,
-    }
-    errors = validate_state(payload)
-    assert errors == [], f"Unexpected errors: {errors}"
-
-
-def test_invalid_state_value():
-    payload = {
-        "state": "occupied",
-        "prev_state": "suitable",
-        "score": 50,
-    }
-    errors = validate_state(payload)
-    assert any("state" in e for e in errors)
-
-
-def test_score_out_of_range():
-    payload = {
-        "state": "suitable",
-        "prev_state": "not_suitable",
-        "score": 150,
-    }
-    errors = validate_state(payload)
-    assert any("score" in e for e in errors)
