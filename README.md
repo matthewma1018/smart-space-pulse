@@ -26,8 +26,8 @@ if the cloud is unreachable.
        │                                              │
        ▼                                              ▼
  Lambda (ssp-inference)                     processing/windower.py
- ├── logistic regression (sklearn)          ├── LSTM (PyTorch, local)
- └── rule-based fallback                    └── hysteresis (55/65)
+ └── logistic regression (sklearn)          ├── LSTM (PyTorch, local)
+                                            └── hysteresis (55/65)
        │                                              │
        ▼                                              ▼
  DynamoDB (ssp-telemetry, ssp-state)        SQLite (data/ssp.db)
@@ -219,7 +219,7 @@ Mosquitto not running. Windows: `net start mosquitto`. Linux:
 | `processing/ingestor.py` | Local MQTT subscriber → SQLite + LSTM windower |
 | `processing/windower.py` | 30-sample windows, LSTM scoring, hysteresis |
 | `processing/storage.py` | SQLite backend; mirrors DynamoDB read interface for fallback |
-| `processing/model/inference.py` | LSTM / logistic / rule-based scoring entry points |
+| `processing/model/inference.py` | LSTM / logistic scoring entry points |
 | `processing/model/train{,_logistic}.py` | Training |
 | `visualization/dashboard.py` | SpacePulse Streamlit UI; DynamoDB → SQLite fallback |
 | `visualization/heatmap.py` | 5×5 simulated occupancy heatmap |
