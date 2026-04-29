@@ -78,7 +78,7 @@ class Windower:
         """Add a sample to the buffer and process if window is full.
 
         Args:
-            sample: Telemetry dict with accel_rms, spl_db, location_id, etc.
+            sample: Telemetry dict with spl_db, location_id, ts_utc, etc.
 
         Returns:
             State-change dict if a state transition occurred, else None.

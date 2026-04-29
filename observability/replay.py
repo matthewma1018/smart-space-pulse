@@ -5,7 +5,7 @@ Feeds recorded JSONL messages back through the processing pipeline.
 
 Usage:
     python observability/replay.py \
-      --file data_samples/mqtt_messages.jsonl \
+      --file data_samples/recorded/rec_suit_000_sensor_log.jsonl \
       --speed 10 \
       --dry-run
 """
@@ -23,7 +23,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Replay recorded MQTT messages")
     parser.add_argument("--file", required=True, help="Path to JSONL file to replay")
     parser.add_argument("--speed", type=float, default=1.0, help="Playback speed multiplier")
-    parser.add_argument("--dry-run", action="store_true", help="Print results, skip publish")
+    parser.add_argument("--dry-run", action="store_true", help="Skip the inter-message sleep; replay as fast as possible")
     return parser.parse_args()
 
 

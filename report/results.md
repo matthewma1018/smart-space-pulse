@@ -97,10 +97,12 @@ not fit.
 - LSTM is local-only because PyTorch does not fit a Lambda zip; the cloud-only path is logistic-only.
 - "Suitability" is a proxy for occupancy quality, not ground-truth occupancy count.
 - During a cloud outage the dashboard's logistic-vs-LSTM comparison degrades to LSTM-only.
+- Heartbeat publishes `rssi_dbm` but nothing reacts to it yet — WiFi degradation is logged, not protected against.
 
 ## 7. Next steps
 
 - Replace the zip-package Lambda with a container-image Lambda so the LSTM can run in cloud.
 - Collect labeled data from 2–3 additional rooms; retrain and re-evaluate cross-location.
 - Add seq-gap detection in the ingestor as an explicit reliability counter.
+- Wire `rssi_dbm` into a staleness/threshold alarm on the dashboard so weak-link conditions surface before AWS publishes drop.
 - Amazon SNS notifications on state transitions for users subscribed to a specific space.

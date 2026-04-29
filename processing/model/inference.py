@@ -98,9 +98,6 @@ def _rule_based_score(feature_vector: list[float]) -> float:
 _model = None
 _model_loaded = False
 
-_logistic = None
-_logistic_loaded = False
-
 
 def _load_model():
     """Attempt to load LSTM weights. Returns None if unavailable."""
@@ -123,22 +120,6 @@ def _load_model():
     else:
         logger.info("No LSTM weights found — using rule-based scorer")
     return _model
-
-
-def _load_logistic():
-    global _logistic, _logistic_loaded
-    _logistic_loaded = True
-    path = os.getenv("LOGISTIC_MODEL_PATH", "processing/model/logistic_model.joblib")
-    if os.path.exists(path):
-        try:
-            import joblib
-            _logistic = joblib.load(path)
-            logger.info("Loaded logistic model from %s", path)
-        except Exception:
-            logger.warning("Failed to load logistic model", exc_info=True)
-    else:
-        logger.info("No logistic model found at %s", path)
-    return _logistic
 
 
 def score(feature_vector: list[float]) -> float:
@@ -172,20 +153,3 @@ def score_from_samples(spl_samples: list[float]) -> float:
             return max(0.0, min(100.0, prob_suitable * 100.0))
 
     return _rule_based_score(_window_features(spl_samples))
-
-
-def score_logistic_from_samples(spl_samples: list[float]) -> float | None:
-    """Logistic regression score of a 30-sample SPL window.
-
-    Returns:
-        Float score in [0, 100] (higher = more suitable), or None if model unavailable.
-    """
-    global _logistic, _logistic_loaded
-    if not _logistic_loaded:
-        _load_logistic()
-    if _logistic is None:
-        return None
-    features = [_window_features(spl_samples)]
-    X = _logistic["scaler"].transform(features)
-    prob = float(_logistic["model"].predict_proba(X)[0][1])
-    return max(0.0, min(100.0, prob * 100.0))

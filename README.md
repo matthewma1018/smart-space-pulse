@@ -87,8 +87,9 @@ mosquitto_sub -h localhost -t 'ssp/#' -v        # should print incoming messages
 python -u device/live_bridge.py
 ```
 
-**Terminal 2 — Local Ingestor** (the LSTM pipeline; only needed if you want
-the dashboard to keep working when AWS is down):
+**Terminal 2 — Local Ingestor** (the LSTM pipeline; required for the LSTM
+column on the dashboard, and serves as the SQLite-fallback source when AWS
+is unreachable):
 ```bash
 MQTT_HOST=localhost MQTT_PORT=1883 MQTT_USE_TLS=false python -u -m processing.ingestor
 ```
@@ -134,7 +135,9 @@ hold the previous state. This prevents flicker around the boundary.
 - Input: `(30, 5)` per-timestep rolling features (sub-window size 8)
 - BCELoss; ~99% validation accuracy on the 700-window dataset (10 epochs)
 - Weights: `processing/model/lstm_weights.pt`
-- Runs in the dashboard process (PyTorch is too large for a Lambda zip)
+- Runs in two places: the ingestor's windower (writes state rows to SQLite)
+  and the dashboard (live-scores the latest 30 SPL samples per refresh).
+  PyTorch is too large for a Lambda zip, so it stays local in both cases.
 
 ### Logistic regression (cloud — Lambda)
 - StandardScaler + sklearn LogisticRegression
@@ -219,7 +222,7 @@ Mosquitto not running. Windows: `net start mosquitto`. Linux:
 | `processing/model/inference.py` | LSTM / logistic scoring entry points |
 | `processing/model/train{,_logistic}.py` | Training |
 | `visualization/dashboard.py` | SpacePulse Streamlit UI; DynamoDB → SQLite fallback |
-| `visualization/heatmap.py` | 5×5 simulated occupancy heatmap |
+| `visualization/heatmap.py` | 5×5 occupancy heatmap (real Core2 at (0,0); other 24 cells simulated and spatially coupled to the real one) |
 | `messaging/schema.md` | MQTT topic + payload contracts (`telemetry` + `heartbeat`) |
 | `messaging/examples/` | `telemetry_sample.json`, `heartbeat_sample.json` |
 | `config/iam_policy_sample.json` | Redacted IAM policy reference |
