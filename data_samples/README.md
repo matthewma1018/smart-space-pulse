@@ -75,10 +75,3 @@ they were arriving from a real device.
 parametric noise (gain shifts, additive jitter, occasional spikes) to expand
 coverage of the decision boundary. See that script for the exact parameters.
 
-## Notes
-
-- Sample data is for offline training and replay only — it is not pushed
-  through the live MQTT schema validator (`messaging/schema.md`), so its
-  field values do not need to match the live regex.
-- Timestamps are wall-clock from the capture session and are useful for
-  ordering within a window but not across windows.
